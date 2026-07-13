@@ -15,8 +15,11 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return the API welcome page HTML', () => {
+      const html = appController.getHome();
+      expect(html).toContain('Ace');
+      expect(html).toContain('Finance API');
+      expect(html).toContain('/auth/login');
     });
   });
 });
