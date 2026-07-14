@@ -16,10 +16,10 @@ export class AppService {
     body {
       min-height: 100vh;
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      color: #0b1f3a;
+      color: #203c62;
       background:
         radial-gradient(ellipse 80% 60% at 20% -10%, rgba(14, 165, 233, 0.12), transparent 55%),
-        radial-gradient(ellipse 70% 50% at 90% 10%, rgba(11, 31, 58, 0.08), transparent 50%),
+        radial-gradient(ellipse 70% 50% at 90% 10%, rgba(32, 60, 98, 0.08), transparent 50%),
         #f8fafc;
       display: flex;
       align-items: center;
@@ -33,7 +33,7 @@ export class AppService {
       border: 1px solid #e2e8f0;
       border-radius: 20px;
       padding: 2rem;
-      box-shadow: 0 12px 40px rgba(11, 31, 58, 0.08);
+      box-shadow: 0 12px 40px rgba(32, 60, 98, 0.08);
       position: relative;
       overflow: hidden;
     }
@@ -42,7 +42,7 @@ export class AppService {
       position: absolute;
       top: 0; left: 0; right: 0;
       height: 3px;
-      background: #0b1f3a;
+      background: #203c62;
     }
     .brand {
       display: flex;
@@ -72,7 +72,7 @@ export class AppService {
       font-size: 1.5rem;
       font-weight: 800;
       letter-spacing: -0.02em;
-      color: #0b1f3a;
+      color: #203c62;
     }
     .subtitle {
       color: #64748b;
@@ -130,7 +130,7 @@ export class AppService {
     .path {
       font-family: ui-monospace, "Cascadia Code", monospace;
       font-size: 0.82rem;
-      color: #0b1f3a;
+      color: #203c62;
     }
     .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
     .btn {
@@ -146,13 +146,13 @@ export class AppService {
     }
     .btn:hover { transform: translateY(-1px); }
     .btn-primary {
-      background: #0b1f3a;
+      background: #203c62;
       color: #ffffff;
     }
-    .btn-primary:hover { background: #122a4a; }
+    .btn-primary:hover { background: #2a4d78; }
     .btn-secondary {
       background: #ffffff;
-      color: #0b1f3a;
+      color: #203c62;
       border: 1px solid #cbd5e1;
     }
     .btn-secondary:hover { background: #f1f5f9; }
