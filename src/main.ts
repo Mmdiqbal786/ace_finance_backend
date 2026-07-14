@@ -11,6 +11,6 @@ async function bootstrap() {
   app.enableCors();
   const port = process.env.PORT ?? 3001;
   await app.listen(port, '0.0.0.0');
-  console.log(`Ace Finance API listening on port ${port}`);
+  console.log(`Aceolution Finance API listening on port ${port}`);
 }
 bootstrap();

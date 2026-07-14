@@ -10,14 +10,20 @@ export class AppService {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Ace Finance API</title>
+  <title>Aceolution Finance API</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       min-height: 100vh;
-      font-family: Inter, system-ui, -apple-system, sans-serif;
-      color: #fff;
-      background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+      font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+      color: #0f172a;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% -10%, rgba(24, 80, 168, 0.12), transparent 55%),
+        radial-gradient(ellipse 70% 50% at 90% 10%, rgba(32, 60, 98, 0.1), transparent 50%),
+        #e8edf4;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -26,53 +32,77 @@ export class AppService {
     .card {
       width: 100%;
       max-width: 720px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 24px;
+      background: #ffffff;
+      border: 1.5px solid #64748b;
+      border-radius: 20px;
       padding: 2rem;
-      backdrop-filter: blur(16px);
-      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.35);
+      box-shadow: 0 12px 40px rgba(32, 60, 98, 0.1);
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #203c62, #1850a8, #70bcfc);
     }
     .brand {
       display: flex;
       align-items: center;
       gap: 0.85rem;
-      margin-bottom: 1.5rem;
+      margin-bottom: 1.25rem;
     }
     .logo {
-      width: 48px;
-      height: 48px;
-      border-radius: 14px;
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      width: 52px;
+      height: 52px;
+      border-radius: 12px;
+      background: #f1f5f9;
+      border: 1.5px solid #94a3b8;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 800;
-      font-size: 1rem;
-      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+      overflow: hidden;
+      flex-shrink: 0;
     }
-    h1 { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; }
-    h1 span { color: #a5b4fc; }
-    .subtitle { color: rgba(255,255,255,0.55); margin-top: 0.35rem; font-size: 0.95rem; }
+    .logo img {
+      display: block;
+      width: 42px;
+      height: 42px;
+      object-fit: contain;
+    }
+    h1 {
+      font-size: 1.55rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: #0f172a;
+    }
+    h1 .accent { color: #1850a8; }
+    .subtitle {
+      color: #334155;
+      margin-top: 0.35rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
     .status {
       display: inline-flex;
       align-items: center;
       gap: 0.5rem;
-      margin: 1.25rem 0 1.75rem;
-      padding: 0.45rem 0.85rem;
+      margin: 1.1rem 0 1.5rem;
+      padding: 0.45rem 0.9rem;
       border-radius: 999px;
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      color: #6ee7b7;
-      font-size: 0.8rem;
-      font-weight: 600;
+      background: #d1fae5;
+      border: 1.5px solid #34d399;
+      color: #065f46;
+      font-size: 0.875rem;
+      font-weight: 700;
     }
     .dot {
-      width: 8px;
-      height: 8px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
-      background: #34d399;
-      box-shadow: 0 0 12px #34d399;
+      background: #059669;
+      box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.25);
       animation: pulse 1.8s ease-in-out infinite;
     }
     @keyframes pulse {
@@ -83,64 +113,73 @@ export class AppService {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 0.75rem;
-      margin-bottom: 1.75rem;
+      margin-bottom: 1.5rem;
     }
     .endpoint {
-      padding: 0.9rem 1rem;
-      border-radius: 14px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 0.95rem 1rem;
+      border-radius: 12px;
+      background: #f1f5f9;
+      border: 1.5px solid #64748b;
     }
     .method {
       display: inline-block;
-      font-size: 0.65rem;
+      font-size: 0.75rem;
       font-weight: 800;
       letter-spacing: 0.06em;
-      padding: 0.2rem 0.45rem;
+      padding: 0.25rem 0.5rem;
       border-radius: 6px;
       margin-bottom: 0.45rem;
     }
-    .get { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
-    .post { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
-    .path { font-family: ui-monospace, monospace; font-size: 0.82rem; color: #e4e4e7; }
+    .get { background: #dbeafe; color: #1850a8; border: 1px solid #93c5fd; }
+    .post { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+    .path {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #1850a8;
+    }
     .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 0.75rem 1.1rem;
+      padding: 0.8rem 1.15rem;
       border-radius: 12px;
       text-decoration: none;
-      font-size: 0.875rem;
-      font-weight: 600;
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      font-size: 0.9375rem;
+      font-weight: 700;
+      transition: background 0.15s ease, transform 0.15s ease;
     }
     .btn:hover { transform: translateY(-1px); }
     .btn-primary {
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
-      color: #fff;
-      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+      background: #203c62;
+      color: #ffffff;
     }
+    .btn-primary:hover { background: #2a4d78; }
     .btn-secondary {
-      background: rgba(255, 255, 255, 0.06);
-      color: #d4d4d8;
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: #ffffff;
+      color: #0f172a;
+      border: 1.5px solid #64748b;
     }
+    .btn-secondary:hover { background: #f1f5f9; }
     .footer {
       margin-top: 1.5rem;
       padding-top: 1rem;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-      color: rgba(255, 255, 255, 0.35);
-      font-size: 0.75rem;
+      border-top: 1.5px solid #94a3b8;
+      color: #334155;
+      font-size: 0.875rem;
+      font-weight: 500;
     }
   </style>
 </head>
 <body>
   <main class="card">
     <div class="brand">
-      <div class="logo">AF</div>
+      <div class="logo">
+        <img src="${frontendUrl}/Ace_logo_small.png" alt="Aceolution" />
+      </div>
       <div>
-        <h1>Ace<span>Finance</span> API</h1>
+        <h1>Aceolution <span class="accent">Finance</span> API</h1>
         <p class="subtitle">Expense approval backend — running and ready</p>
       </div>
     </div>

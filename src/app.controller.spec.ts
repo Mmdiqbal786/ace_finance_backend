@@ -17,7 +17,7 @@ describe('AppController', () => {
   describe('root', () => {
     it('should return the API welcome page HTML', () => {
       const html = appController.getHome();
-      expect(html).toContain('Ace');
+      expect(html).toContain('Aceolution');
       expect(html).toContain('Finance API');
       expect(html).toContain('/auth/login');
     });
