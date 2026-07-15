@@ -6,6 +6,10 @@ import { AppService } from './app.service';
 import { ExpensesModule } from './expenses/expenses.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { CategoriesModule } from './categories/categories.module';
+import { ProjectsModule } from './projects/projects.module';
+import { CountriesModule } from './countries/countries.module';
+import { FxModule } from './fx/fx.module';
 
 @Module({
   imports: [
@@ -20,6 +24,10 @@ import { AuthModule } from './auth/auth.module';
     ExpensesModule,
     UsersModule,
     AuthModule,
+    CategoriesModule,
+    ProjectsModule,
+    CountriesModule,
+    FxModule,
   ],
   controllers: [AppController],
   providers: [AppService],

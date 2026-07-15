@@ -2,12 +2,16 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { UsersService } from '../users/users.service';
+import { CategoriesService } from '../categories/categories.service';
+import { CountriesService } from '../countries/countries.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
+    private categoriesService: CategoriesService,
+    private countriesService: CountriesService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -39,6 +43,14 @@ export class AuthService {
   }
 
   async seed() {
-    return this.usersService.seedAdmin();
+    const admin = await this.usersService.seedAdmin();
+    const categories = await this.categoriesService.ensureDefaults();
+    const countries = await this.countriesService.ensureDefaults();
+    return {
+      ...admin,
+      categories,
+      countries,
+      message: `${admin.message} ${categories.message} ${countries.message}`.trim(),
+    };
   }
 }

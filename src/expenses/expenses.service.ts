@@ -2,6 +2,10 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Expense, ExpenseDocument } from './expense.schema';
+import { CategoriesService } from '../categories/categories.service';
+import { ProjectsService } from '../projects/projects.service';
+import { CountriesService } from '../countries/countries.service';
+import { FxService } from '../fx/fx.service';
 
 export interface ActingUser {
   userId: string;
@@ -10,22 +14,65 @@ export interface ActingUser {
   role: string;
 }
 
+export interface CreateExpenseInput {
+  requesterName: string;
+  requesterEmail: string;
+  /** Local-currency amount entered by requester */
+  originalAmount: number;
+  country: string;
+  category: string;
+  project: string;
+  description: string;
+  date: string;
+  dueDate: string;
+}
+
 @Injectable()
 export class ExpensesService {
   constructor(
     @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
+    private readonly categoriesService: CategoriesService,
+    private readonly projectsService: ProjectsService,
+    private readonly countriesService: CountriesService,
+    private readonly fxService: FxService,
   ) {}
 
-  async create(
-    expenseData: Omit<Expense, 'id' | 'status' | 'submittedAt' | 'history'>,
-  ): Promise<Expense> {
+  async create(expenseData: CreateExpenseInput): Promise<Expense> {
+    const category = await this.categoriesService.assertActiveName(expenseData.category);
+    const project = await this.projectsService.assertActiveName(expenseData.project);
+    const country = await this.countriesService.assertActiveCountry(expenseData.country);
+
+    if (!expenseData.dueDate) {
+      throw new BadRequestException('Due date is required');
+    }
+    if (expenseData.dueDate < expenseData.date) {
+      throw new BadRequestException('Due date cannot be before the expense date');
+    }
+
+    const fx = await this.fxService.convertToUsd(
+      country.currency,
+      Number(expenseData.originalAmount),
+    );
+
     const now = new Date().toISOString();
     const id = `EXP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newExpense = new this.expenseModel({
-      ...expenseData,
+      requesterName: expenseData.requesterName,
+      requesterEmail: expenseData.requesterEmail,
+      description: expenseData.description,
+      date: expenseData.date,
+      dueDate: expenseData.dueDate,
+      category,
+      project,
+      country: country.name,
+      currency: fx.currency,
+      originalAmount: fx.originalAmount,
+      exchangeRate: fx.exchangeRate,
+      exchangeRateDate: fx.rateDate,
+      amount: fx.amountUsd,
+      paidAmount: 0,
       id,
-      amount: Number(expenseData.amount),
       status: 'PENDING_APPROVER',
       submittedAt: now,
       history: [
@@ -33,7 +80,7 @@ export class ExpensesService {
           action: 'Submitted Request',
           timestamp: now,
           user: 'Public Requester',
-          notes: `Expense request of $${expenseData.amount} submitted by ${expenseData.requesterName}.`,
+          notes: `Expense of ${fx.originalAmount} ${fx.currency} (≈ $${fx.amountUsd} USD @ ${fx.exchangeRate}) submitted by ${expenseData.requesterName}.`,
         },
       ],
     });
@@ -90,20 +137,35 @@ export class ExpensesService {
       action: 'Rejected by Manager',
       timestamp: now,
       user: userName,
-      notes: notes || 'Rejected without notes.',
+      notes: notes || 'Rejected without review notes.',
     });
     return expense.save();
+  }
+
+  private assertPayableStatus(status: string, action: string) {
+    if (status !== 'APPROVED_APPROVER' && status !== 'PARTIALLY_PAID') {
+      throw new BadRequestException(`Cannot ${action} expense. Current status is ${status}`);
+    }
+  }
+
+  private roundMoney(value: number): number {
+    return Math.round(Number(value) * 100) / 100;
+  }
+
+  private remainingAmount(expense: ExpenseDocument): number {
+    const paid = this.roundMoney(Number(expense.paidAmount || 0));
+    return this.roundMoney(Math.max(0, Number(expense.amount) - paid));
   }
 
   async process(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    if (expense.status !== 'APPROVED_APPROVER') {
-      throw new BadRequestException(`Cannot process expense. Must be approved by Manager first.`);
-    }
+    this.assertPayableStatus(expense.status, 'process');
 
     const now = new Date().toISOString();
     const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
+    const remaining = this.remainingAmount(expense);
+    expense.paidAmount = this.roundMoney(Number(expense.amount));
     expense.status = 'PROCESSED';
     expense.processorNotes = notes;
     expense.processedAt = now;
@@ -111,17 +173,75 @@ export class ExpensesService {
       action: 'Processed & Paid',
       timestamp: now,
       user: userName,
-      notes: notes || 'Processed and disbursed without notes.',
+      notes:
+        notes ||
+        (remaining > 0
+          ? `Marked as fully paid. Final payout $${remaining.toFixed(2)}.`
+          : 'Marked as processed.'),
     });
+    return expense.save();
+  }
+
+  async partialPay(
+    id: string,
+    paymentAmount: number,
+    notes?: string,
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
+    const expense = await this.expenseModel.findOne({ id }).exec();
+    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    this.assertPayableStatus(expense.status, 'partially pay');
+
+    const amount = this.roundMoney(Number(paymentAmount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('Payment amount must be greater than $0.00');
+    }
+
+    const remaining = this.remainingAmount(expense);
+    if (amount > remaining) {
+      throw new BadRequestException(
+        `Payment amount cannot exceed remaining balance of $${remaining.toFixed(2)}`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
+    const newPaid = this.roundMoney(Number(expense.paidAmount || 0) + amount);
+    expense.paidAmount = newPaid;
+    expense.processorNotes = notes ?? expense.processorNotes;
+
+    const newRemaining = this.roundMoney(Number(expense.amount) - newPaid);
+    if (newRemaining <= 0) {
+      expense.paidAmount = this.roundMoney(Number(expense.amount));
+      expense.status = 'PROCESSED';
+      expense.processedAt = now;
+      expense.history.push({
+        action: 'Processed & Paid',
+        timestamp: now,
+        user: userName,
+        notes:
+          notes ||
+          `Final partial payment of $${amount.toFixed(2)}. Fully paid $${expense.paidAmount.toFixed(2)}.`,
+      });
+    } else {
+      expense.status = 'PARTIALLY_PAID';
+      expense.history.push({
+        action: 'Partially Paid',
+        timestamp: now,
+        user: userName,
+        notes:
+          notes ||
+          `Partial payment of $${amount.toFixed(2)}. Paid $${newPaid.toFixed(2)} of $${Number(expense.amount).toFixed(2)}. Remaining $${newRemaining.toFixed(2)}.`,
+      });
+    }
+
     return expense.save();
   }
 
   async processorReject(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    if (expense.status !== 'APPROVED_APPROVER') {
-      throw new BadRequestException(`Cannot reject. Must be approved by Manager first.`);
-    }
+    this.assertPayableStatus(expense.status, 'reject');
 
     const now = new Date().toISOString();
     const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
@@ -142,10 +262,13 @@ export class ExpensesService {
     updateData: {
       requesterName?: string;
       requesterEmail?: string;
-      amount?: number;
+      originalAmount?: number;
+      country?: string;
       category?: string;
+      project?: string;
       description?: string;
       date?: string;
+      dueDate?: string;
     },
     actingUser?: ActingUser,
   ): Promise<Expense> {
@@ -163,13 +286,15 @@ export class ExpensesService {
       changes.push(`Email: "${expense.requesterEmail}" ➔ "${updateData.requesterEmail}"`);
       expense.requesterEmail = updateData.requesterEmail;
     }
-    if (updateData.amount && Number(updateData.amount) !== expense.amount) {
-      changes.push(`Amount: $${expense.amount} ➔ $${updateData.amount}`);
-      expense.amount = Number(updateData.amount);
-    }
     if (updateData.category && updateData.category !== expense.category) {
-      changes.push(`Category: "${expense.category}" ➔ "${updateData.category}"`);
-      expense.category = updateData.category;
+      const category = await this.categoriesService.assertActiveName(updateData.category);
+      changes.push(`Category: "${expense.category}" ➔ "${category}"`);
+      expense.category = category;
+    }
+    if (updateData.project && updateData.project !== expense.project) {
+      const project = await this.projectsService.assertActiveName(updateData.project);
+      changes.push(`Project: "${expense.project || '—'}" ➔ "${project}"`);
+      expense.project = project;
     }
     if (updateData.description && updateData.description !== expense.description) {
       changes.push(`Description updated`);
@@ -178,6 +303,43 @@ export class ExpensesService {
     if (updateData.date && updateData.date !== expense.date) {
       changes.push(`Date: "${expense.date}" ➔ "${updateData.date}"`);
       expense.date = updateData.date;
+    }
+    if (updateData.dueDate && updateData.dueDate !== expense.dueDate) {
+      changes.push(`Due date: "${expense.dueDate || '—'}" ➔ "${updateData.dueDate}"`);
+      expense.dueDate = updateData.dueDate;
+    }
+
+    const effectiveDate = expense.date;
+    const effectiveDueDate = expense.dueDate;
+    if (effectiveDueDate && effectiveDate && effectiveDueDate < effectiveDate) {
+      throw new BadRequestException('Due date cannot be before the expense date');
+    }
+
+    const countryChanged =
+      updateData.country !== undefined && updateData.country !== expense.country;
+    const amountChanged =
+      updateData.originalAmount !== undefined &&
+      Number(updateData.originalAmount) !== Number(expense.originalAmount || expense.amount);
+
+    if (countryChanged || amountChanged) {
+      const countryName = updateData.country ?? expense.country;
+      if (!countryName) {
+        throw new BadRequestException('Country is required to update amount');
+      }
+      const country = await this.countriesService.assertActiveCountry(countryName);
+      const localAmount = Number(
+        updateData.originalAmount ?? expense.originalAmount ?? expense.amount,
+      );
+      const fx = await this.fxService.convertToUsd(country.currency, localAmount);
+      changes.push(
+        `Amount: ${expense.originalAmount || expense.amount} ${expense.currency || 'USD'} ➔ ${fx.originalAmount} ${fx.currency} (≈ $${fx.amountUsd})`,
+      );
+      expense.country = country.name;
+      expense.currency = fx.currency;
+      expense.originalAmount = fx.originalAmount;
+      expense.exchangeRate = fx.exchangeRate;
+      expense.exchangeRateDate = fx.rateDate;
+      expense.amount = fx.amountUsd;
     }
 
     if (changes.length > 0) {
@@ -207,10 +369,19 @@ export class ExpensesService {
 
     expenses.forEach((e) => {
       totalRequested += e.amount;
+      const paid = Number(e.paidAmount || 0);
       if (e.status === 'PENDING_APPROVER') pendingApproval++;
-      else if (e.status === 'APPROVED_APPROVER') pendingProcessing++;
-      else if (e.status === 'PROCESSED') { processed++; totalProcessed += e.amount; }
-      else if (e.status === 'REJECTED_APPROVER' || e.status === 'REJECTED_PROCESSOR') rejected++;
+      else if (e.status === 'APPROVED_APPROVER' || e.status === 'PARTIALLY_PAID') {
+        pendingProcessing++;
+      } else if (e.status === 'PROCESSED') {
+        processed++;
+        totalProcessed += paid > 0 ? paid : e.amount;
+      } else if (e.status === 'REJECTED_APPROVER' || e.status === 'REJECTED_PROCESSOR') {
+        rejected++;
+      }
+      if (e.status === 'PARTIALLY_PAID' && paid > 0) {
+        totalProcessed += paid;
+      }
       if (!byCategory[e.category]) byCategory[e.category] = 0;
       byCategory[e.category] += e.amount;
     });
@@ -221,10 +392,19 @@ export class ExpensesService {
         allLogs.push({ expenseId: e.id, requesterName: e.requesterName, action: h.action, timestamp: h.timestamp, user: h.user });
       });
     });
-    const recentActivity = allLogs
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, 8);
 
-    return { totalRequests: expenses.length, pendingApproval, pendingProcessing, processed, rejected, totalRequestedAmount: totalRequested, totalProcessedAmount: totalProcessed, byCategory, recentActivity };
+    allLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    return {
+      totalRequests: expenses.length,
+      pendingApproval,
+      pendingProcessing,
+      processed,
+      rejected,
+      totalRequestedAmount: totalRequested,
+      totalProcessedAmount: totalProcessed,
+      byCategory,
+      recentActivity: allLogs.slice(0, 20),
+    };
   }
 }

@@ -14,7 +14,18 @@ export class ExpensesController {
   // Public — no auth required (submitted by public users)
   @Post()
   async create(
-    @Body() body: { requesterName: string; requesterEmail: string; amount: number; category: string; description: string; date: string },
+    @Body()
+    body: {
+      requesterName: string;
+      requesterEmail: string;
+      originalAmount: number;
+      country: string;
+      category: string;
+      project: string;
+      description: string;
+      date: string;
+      dueDate: string;
+    },
   ) {
     return this.expensesService.create(body);
   }
@@ -64,6 +75,18 @@ export class ExpensesController {
   @Roles('PROCESSOR', 'ADMIN')
   async process(@Param('id') id: string, @Body('notes') notes: string, @Request() req: any) {
     return this.expensesService.process(id, notes, req.user);
+  }
+
+  // PROCESSOR or ADMIN only — record a partial payout
+  @Patch(':id/partial-pay')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('PROCESSOR', 'ADMIN')
+  async partialPay(
+    @Param('id') id: string,
+    @Body() body: { amount: number; notes?: string },
+    @Request() req: any,
+  ) {
+    return this.expensesService.partialPay(id, body.amount, body.notes, req.user);
   }
 
   // PROCESSOR or ADMIN only
