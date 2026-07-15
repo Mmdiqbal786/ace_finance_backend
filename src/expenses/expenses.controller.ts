@@ -14,7 +14,16 @@ export class ExpensesController {
   // Public — no auth required (submitted by public users)
   @Post()
   async create(
-    @Body() body: { requesterName: string; requesterEmail: string; amount: number; category: string; description: string; date: string },
+    @Body()
+    body: {
+      requesterName: string;
+      requesterEmail: string;
+      amount: number;
+      category: string;
+      project: string;
+      description: string;
+      date: string;
+    },
   ) {
     return this.expensesService.create(body);
   }

@@ -2,6 +2,8 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Expense, ExpenseDocument } from './expense.schema';
+import { CategoriesService } from '../categories/categories.service';
+import { ProjectsService } from '../projects/projects.service';
 
 export interface ActingUser {
   userId: string;
@@ -14,16 +16,23 @@ export interface ActingUser {
 export class ExpensesService {
   constructor(
     @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
+    private readonly categoriesService: CategoriesService,
+    private readonly projectsService: ProjectsService,
   ) {}
 
   async create(
     expenseData: Omit<Expense, 'id' | 'status' | 'submittedAt' | 'history'>,
   ): Promise<Expense> {
+    const category = await this.categoriesService.assertActiveName(expenseData.category);
+    const project = await this.projectsService.assertActiveName(expenseData.project);
+
     const now = new Date().toISOString();
     const id = `EXP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newExpense = new this.expenseModel({
       ...expenseData,
+      category,
+      project,
       id,
       amount: Number(expenseData.amount),
       status: 'PENDING_APPROVER',
@@ -144,6 +153,7 @@ export class ExpensesService {
       requesterEmail?: string;
       amount?: number;
       category?: string;
+      project?: string;
       description?: string;
       date?: string;
     },
@@ -168,8 +178,14 @@ export class ExpensesService {
       expense.amount = Number(updateData.amount);
     }
     if (updateData.category && updateData.category !== expense.category) {
-      changes.push(`Category: "${expense.category}" ➔ "${updateData.category}"`);
-      expense.category = updateData.category;
+      const category = await this.categoriesService.assertActiveName(updateData.category);
+      changes.push(`Category: "${expense.category}" ➔ "${category}"`);
+      expense.category = category;
+    }
+    if (updateData.project && updateData.project !== expense.project) {
+      const project = await this.projectsService.assertActiveName(updateData.project);
+      changes.push(`Project: "${expense.project || '—'}" ➔ "${project}"`);
+      expense.project = project;
     }
     if (updateData.description && updateData.description !== expense.description) {
       changes.push(`Description updated`);

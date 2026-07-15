@@ -38,6 +38,9 @@ export class Expense {
   category: string;
 
   @Prop({ required: true })
+  project: string;
+
+  @Prop({ required: true })
   description: string;
 
   @Prop({ required: true })
