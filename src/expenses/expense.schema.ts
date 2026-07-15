@@ -34,6 +34,10 @@ export class Expense {
   @Prop({ required: true })
   amount: number;
 
+  /** Cumulative USD amount paid so far (partial payouts) */
+  @Prop({ default: 0 })
+  paidAmount?: number;
+
   /** Amount entered in the country's currency */
   @Prop()
   originalAmount?: number;
@@ -63,6 +67,9 @@ export class Expense {
 
   @Prop({ required: true })
   date: string;
+
+  @Prop({ required: true })
+  dueDate: string;
 
   @Prop({ required: true, default: 'PENDING_APPROVER' })
   status: string;

@@ -24,6 +24,7 @@ export interface CreateExpenseInput {
   project: string;
   description: string;
   date: string;
+  dueDate: string;
 }
 
 @Injectable()
@@ -41,6 +42,13 @@ export class ExpensesService {
     const project = await this.projectsService.assertActiveName(expenseData.project);
     const country = await this.countriesService.assertActiveCountry(expenseData.country);
 
+    if (!expenseData.dueDate) {
+      throw new BadRequestException('Due date is required');
+    }
+    if (expenseData.dueDate < expenseData.date) {
+      throw new BadRequestException('Due date cannot be before the expense date');
+    }
+
     const fx = await this.fxService.convertToUsd(
       country.currency,
       Number(expenseData.originalAmount),
@@ -54,6 +62,7 @@ export class ExpensesService {
       requesterEmail: expenseData.requesterEmail,
       description: expenseData.description,
       date: expenseData.date,
+      dueDate: expenseData.dueDate,
       category,
       project,
       country: country.name,
@@ -62,6 +71,7 @@ export class ExpensesService {
       exchangeRate: fx.exchangeRate,
       exchangeRateDate: fx.rateDate,
       amount: fx.amountUsd,
+      paidAmount: 0,
       id,
       status: 'PENDING_APPROVER',
       submittedAt: now,
@@ -132,15 +142,30 @@ export class ExpensesService {
     return expense.save();
   }
 
+  private assertPayableStatus(status: string, action: string) {
+    if (status !== 'APPROVED_APPROVER' && status !== 'PARTIALLY_PAID') {
+      throw new BadRequestException(`Cannot ${action} expense. Current status is ${status}`);
+    }
+  }
+
+  private roundMoney(value: number): number {
+    return Math.round(Number(value) * 100) / 100;
+  }
+
+  private remainingAmount(expense: ExpenseDocument): number {
+    const paid = this.roundMoney(Number(expense.paidAmount || 0));
+    return this.roundMoney(Math.max(0, Number(expense.amount) - paid));
+  }
+
   async process(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    if (expense.status !== 'APPROVED_APPROVER') {
-      throw new BadRequestException(`Cannot process expense. Current status is ${expense.status}`);
-    }
+    this.assertPayableStatus(expense.status, 'process');
 
     const now = new Date().toISOString();
     const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
+    const remaining = this.remainingAmount(expense);
+    expense.paidAmount = this.roundMoney(Number(expense.amount));
     expense.status = 'PROCESSED';
     expense.processorNotes = notes;
     expense.processedAt = now;
@@ -148,17 +173,75 @@ export class ExpensesService {
       action: 'Processed & Paid',
       timestamp: now,
       user: userName,
-      notes: notes || 'Marked as processed.',
+      notes:
+        notes ||
+        (remaining > 0
+          ? `Marked as fully paid. Final payout $${remaining.toFixed(2)}.`
+          : 'Marked as processed.'),
     });
+    return expense.save();
+  }
+
+  async partialPay(
+    id: string,
+    paymentAmount: number,
+    notes?: string,
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
+    const expense = await this.expenseModel.findOne({ id }).exec();
+    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    this.assertPayableStatus(expense.status, 'partially pay');
+
+    const amount = this.roundMoney(Number(paymentAmount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('Payment amount must be greater than $0.00');
+    }
+
+    const remaining = this.remainingAmount(expense);
+    if (amount > remaining) {
+      throw new BadRequestException(
+        `Payment amount cannot exceed remaining balance of $${remaining.toFixed(2)}`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
+    const newPaid = this.roundMoney(Number(expense.paidAmount || 0) + amount);
+    expense.paidAmount = newPaid;
+    expense.processorNotes = notes ?? expense.processorNotes;
+
+    const newRemaining = this.roundMoney(Number(expense.amount) - newPaid);
+    if (newRemaining <= 0) {
+      expense.paidAmount = this.roundMoney(Number(expense.amount));
+      expense.status = 'PROCESSED';
+      expense.processedAt = now;
+      expense.history.push({
+        action: 'Processed & Paid',
+        timestamp: now,
+        user: userName,
+        notes:
+          notes ||
+          `Final partial payment of $${amount.toFixed(2)}. Fully paid $${expense.paidAmount.toFixed(2)}.`,
+      });
+    } else {
+      expense.status = 'PARTIALLY_PAID';
+      expense.history.push({
+        action: 'Partially Paid',
+        timestamp: now,
+        user: userName,
+        notes:
+          notes ||
+          `Partial payment of $${amount.toFixed(2)}. Paid $${newPaid.toFixed(2)} of $${Number(expense.amount).toFixed(2)}. Remaining $${newRemaining.toFixed(2)}.`,
+      });
+    }
+
     return expense.save();
   }
 
   async processorReject(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    if (expense.status !== 'APPROVED_APPROVER') {
-      throw new BadRequestException(`Cannot reject expense. Current status is ${expense.status}`);
-    }
+    this.assertPayableStatus(expense.status, 'reject');
 
     const now = new Date().toISOString();
     const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
@@ -185,6 +268,7 @@ export class ExpensesService {
       project?: string;
       description?: string;
       date?: string;
+      dueDate?: string;
     },
     actingUser?: ActingUser,
   ): Promise<Expense> {
@@ -219,6 +303,16 @@ export class ExpensesService {
     if (updateData.date && updateData.date !== expense.date) {
       changes.push(`Date: "${expense.date}" ➔ "${updateData.date}"`);
       expense.date = updateData.date;
+    }
+    if (updateData.dueDate && updateData.dueDate !== expense.dueDate) {
+      changes.push(`Due date: "${expense.dueDate || '—'}" ➔ "${updateData.dueDate}"`);
+      expense.dueDate = updateData.dueDate;
+    }
+
+    const effectiveDate = expense.date;
+    const effectiveDueDate = expense.dueDate;
+    if (effectiveDueDate && effectiveDate && effectiveDueDate < effectiveDate) {
+      throw new BadRequestException('Due date cannot be before the expense date');
     }
 
     const countryChanged =
@@ -275,10 +369,19 @@ export class ExpensesService {
 
     expenses.forEach((e) => {
       totalRequested += e.amount;
+      const paid = Number(e.paidAmount || 0);
       if (e.status === 'PENDING_APPROVER') pendingApproval++;
-      else if (e.status === 'APPROVED_APPROVER') pendingProcessing++;
-      else if (e.status === 'PROCESSED') { processed++; totalProcessed += e.amount; }
-      else if (e.status === 'REJECTED_APPROVER' || e.status === 'REJECTED_PROCESSOR') rejected++;
+      else if (e.status === 'APPROVED_APPROVER' || e.status === 'PARTIALLY_PAID') {
+        pendingProcessing++;
+      } else if (e.status === 'PROCESSED') {
+        processed++;
+        totalProcessed += paid > 0 ? paid : e.amount;
+      } else if (e.status === 'REJECTED_APPROVER' || e.status === 'REJECTED_PROCESSOR') {
+        rejected++;
+      }
+      if (e.status === 'PARTIALLY_PAID' && paid > 0) {
+        totalProcessed += paid;
+      }
       if (!byCategory[e.category]) byCategory[e.category] = 0;
       byCategory[e.category] += e.amount;
     });
