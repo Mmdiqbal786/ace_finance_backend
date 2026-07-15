@@ -18,7 +18,8 @@ export class ExpensesController {
     body: {
       requesterName: string;
       requesterEmail: string;
-      amount: number;
+      originalAmount: number;
+      country: string;
       category: string;
       project: string;
       description: string;

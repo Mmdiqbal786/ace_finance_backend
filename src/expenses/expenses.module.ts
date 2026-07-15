@@ -5,12 +5,16 @@ import { ExpensesService } from './expenses.service';
 import { Expense, ExpenseSchema } from './expense.schema';
 import { CategoriesModule } from '../categories/categories.module';
 import { ProjectsModule } from '../projects/projects.module';
+import { CountriesModule } from '../countries/countries.module';
+import { FxModule } from '../fx/fx.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Expense.name, schema: ExpenseSchema }]),
     CategoriesModule,
     ProjectsModule,
+    CountriesModule,
+    FxModule,
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService],

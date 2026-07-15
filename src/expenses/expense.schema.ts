@@ -34,6 +34,24 @@ export class Expense {
   @Prop({ required: true })
   amount: number;
 
+  /** Amount entered in the country's currency */
+  @Prop()
+  originalAmount?: number;
+
+  @Prop()
+  country?: string;
+
+  /** ISO currency code from the selected country, e.g. INR */
+  @Prop()
+  currency?: string;
+
+  /** 1 unit of local currency = exchangeRate USD (at submission) */
+  @Prop()
+  exchangeRate?: number;
+
+  @Prop()
+  exchangeRateDate?: string;
+
   @Prop({ required: true })
   category: string;
 
