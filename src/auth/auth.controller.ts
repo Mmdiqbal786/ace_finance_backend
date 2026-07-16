@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Request, Get, Query } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
@@ -22,6 +22,23 @@ export class AuthController {
       body.currentPassword,
       body.newPassword,
     );
+  }
+
+  @Post('forgot-password')
+  async forgotPassword(@Body() body: { email: string }) {
+    return this.authService.forgotPassword(body.email);
+  }
+
+  @Post('reset-password')
+  async resetPassword(
+    @Body() body: { token: string; newPassword: string; confirmPassword: string },
+  ) {
+    return this.authService.resetPassword(body.token, body.newPassword, body.confirmPassword);
+  }
+
+  @Get('validate-reset-token')
+  async validateResetToken(@Query('token') token: string) {
+    return this.authService.validateResetToken(token);
   }
 
   // One-time seed endpoint — creates admin account if no users exist

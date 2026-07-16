@@ -8,12 +8,14 @@ import { JwtStrategy } from './jwt.strategy';
 import { UsersModule } from '../users/users.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { CountriesModule } from '../countries/countries.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
     UsersModule,
     CategoriesModule,
     CountriesModule,
+    MailModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

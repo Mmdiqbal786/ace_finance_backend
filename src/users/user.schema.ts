@@ -29,6 +29,12 @@ export class User {
   /** When true, user must set a new password before accessing the dashboard */
   @Prop({ default: false })
   mustChangePassword: boolean;
+
+  @Prop()
+  passwordResetToken?: string;
+
+  @Prop()
+  passwordResetExpires?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

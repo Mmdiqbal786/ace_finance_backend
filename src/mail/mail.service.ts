@@ -98,4 +98,70 @@ export class MailService {
       return { sent: false, reason: err.message || 'Email send failed' };
     }
   }
+
+  async sendPasswordResetEmail(params: {
+    to: string;
+    name: string;
+    token: string;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const frontendUrl = this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+    const resetUrl = `${frontendUrl.replace(/\/$/, '')}/reset-password/?token=${encodeURIComponent(params.token)}`;
+    const subject = 'Reset your Aceolution Finance password';
+    const text = [
+      `Hello ${params.name},`,
+      '',
+      'We received a request to reset your Aceolution Finance password.',
+      '',
+      `Reset your password here: ${resetUrl}`,
+      '',
+      'This link expires in 1 hour. If you did not request this, you can ignore this email.',
+      '',
+      '— Aceolution Finance',
+    ].join('\n');
+
+    const html = `
+      <div style="font-family:Calibri,Arial,sans-serif;color:#1e293b;line-height:1.5;max-width:560px">
+        <h2 style="color:#203c62;margin:0 0 12px">Reset your password</h2>
+        <p>Hello <strong>${params.name}</strong>,</p>
+        <p>We received a request to reset your Aceolution Finance password.</p>
+        <p><a href="${resetUrl}" style="display:inline-block;background:#203c62;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">Set New Password</a></p>
+        <p style="font-size:13px;color:#64748b">This link expires in 1 hour. If you did not request this, you can ignore this email.</p>
+      </div>
+    `;
+
+    if (!this.isConfigured()) {
+      this.logger.warn(`SMTP not configured — password reset email for ${params.to} was not sent.`);
+      return { sent: false, reason: 'SMTP not configured' };
+    }
+
+    try {
+      const port = Number(this.config.get<string>('SMTP_PORT') || 587);
+      const transporter = nodemailer.createTransport({
+        host: this.config.get<string>('SMTP_HOST'),
+        port,
+        secure: port === 465,
+        auth: {
+          user: this.config.get<string>('SMTP_USER'),
+          pass: this.config.get<string>('SMTP_PASS'),
+        },
+      });
+
+      const from =
+        this.config.get<string>('SMTP_FROM') ||
+        this.config.getOrThrow<string>('SMTP_USER');
+
+      await transporter.sendMail({
+        from: `"Aceolution Finance" <${from}>`,
+        to: params.to,
+        subject,
+        text,
+        html,
+      });
+
+      return { sent: true };
+    } catch (err: any) {
+      this.logger.error(`Failed to send password reset email to ${params.to}: ${err.message}`);
+      return { sent: false, reason: err.message || 'Email send failed' };
+    }
+  }
 }
