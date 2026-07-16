@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ExpensesController } from './expenses.controller';
 import { ExpensesService } from './expenses.service';
+import { ExpensesScheduler } from './expenses.scheduler';
 import { Expense, ExpenseSchema } from './expense.schema';
 import { CategoriesModule } from '../categories/categories.module';
 import { ProjectsModule } from '../projects/projects.module';
@@ -21,7 +22,7 @@ import { UsersModule } from '../users/users.module';
     UsersModule,
   ],
   controllers: [ExpensesController],
-  providers: [ExpensesService],
+  providers: [ExpensesService, ExpensesScheduler],
   exports: [ExpensesService],
 })
 export class ExpensesModule {}

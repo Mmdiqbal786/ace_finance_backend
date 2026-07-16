@@ -101,6 +101,14 @@ export class Expense {
   @Prop()
   processedAt?: string;
 
+  /** Set when the 1-day-left approver reminder email was sent (YYYY-MM-DD of due date). */
+  @Prop()
+  approverDueSoonReminderSentOn?: string;
+
+  /** Set when the 1-day-left processor reminder email was sent (YYYY-MM-DD of due date). */
+  @Prop()
+  processorDueSoonReminderSentOn?: string;
+
   @Prop({ type: [HistoryLogSchema], default: [] })
   history: HistoryLog[];
 }

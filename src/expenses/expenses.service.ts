@@ -551,4 +551,127 @@ export class ExpensesService {
       recentActivity: allLogs.slice(0, 20),
     };
   }
+
+  private localDateOnly(d: Date): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  /**
+   * Daily job: email all active approvers for PENDING_APPROVER requests
+   * whose due date is tomorrow (1 day left). Sends once per expense.
+   */
+  async sendApproverDueSoonReminders(): Promise<{ checked: number; reminded: number }> {
+    const tomorrow = new Date();
+    tomorrow.setHours(0, 0, 0, 0);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = this.localDateOnly(tomorrow);
+
+    const pending = await this.expenseModel
+      .find({
+        status: 'PENDING_APPROVER',
+        $or: [
+          { dueDate: tomorrowStr },
+          { dueDate: { $regex: `^${tomorrowStr}` } },
+        ],
+      })
+      .exec();
+
+    const candidates = pending.filter(
+      (e) => e.approverDueSoonReminderSentOn !== tomorrowStr,
+    );
+
+    if (candidates.length === 0) {
+      return { checked: pending.length, reminded: 0 };
+    }
+
+    const approvers = await this.usersService.findActiveByRole('APPROVER');
+    if (approvers.length === 0) {
+      this.logger.warn('Due-soon reminder skipped: no active APPROVER users.');
+      return { checked: candidates.length, reminded: 0 };
+    }
+
+    let reminded = 0;
+    for (const expense of candidates) {
+      const summary = this.toMailSummary(expense);
+      for (const approver of approvers) {
+        this.notify(
+          `due-soon→approver ${approver.email} ${expense.id}`,
+          this.mailService.sendExpenseDueSoonToApprover({
+            to: approver.email,
+            approverName: approver.name,
+            expense: summary,
+          }),
+        );
+      }
+      expense.approverDueSoonReminderSentOn = tomorrowStr;
+      await expense.save();
+      reminded++;
+    }
+
+    this.logger.log(
+      `Approver due-soon reminders: ${reminded} expense(s) for due date ${tomorrowStr}`,
+    );
+    return { checked: candidates.length, reminded };
+  }
+
+  /**
+   * Daily job: email processors for approved / partially paid requests
+   * whose due date is tomorrow (1 day left). Only after approver approval.
+   */
+  async sendProcessorDueSoonReminders(): Promise<{ checked: number; reminded: number }> {
+    const tomorrow = new Date();
+    tomorrow.setHours(0, 0, 0, 0);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = this.localDateOnly(tomorrow);
+
+    const pendingPay = await this.expenseModel
+      .find({
+        status: { $in: ['APPROVED_APPROVER', 'PARTIALLY_PAID'] },
+        $or: [
+          { dueDate: tomorrowStr },
+          { dueDate: { $regex: `^${tomorrowStr}` } },
+        ],
+      })
+      .exec();
+
+    const candidates = pendingPay.filter(
+      (e) => e.processorDueSoonReminderSentOn !== tomorrowStr,
+    );
+
+    if (candidates.length === 0) {
+      return { checked: pendingPay.length, reminded: 0 };
+    }
+
+    const processors = await this.usersService.findActiveByRole('PROCESSOR');
+    if (processors.length === 0) {
+      this.logger.warn('Processor due-soon reminder skipped: no active PROCESSOR users.');
+      return { checked: candidates.length, reminded: 0 };
+    }
+
+    let reminded = 0;
+    for (const expense of candidates) {
+      const summary = this.toMailSummary(expense);
+      for (const processor of processors) {
+        this.notify(
+          `due-soon→processor ${processor.email} ${expense.id}`,
+          this.mailService.sendExpenseDueSoonToProcessor({
+            to: processor.email,
+            processorName: processor.name,
+            expense: summary,
+          }),
+        );
+      }
+      expense.processorDueSoonReminderSentOn = tomorrowStr;
+      await expense.save();
+      reminded++;
+    }
+
+    this.logger.log(
+      `Processor due-soon reminders: ${reminded} expense(s) for due date ${tomorrowStr}`,
+    );
+    return { checked: candidates.length, reminded };
+  }
 }
