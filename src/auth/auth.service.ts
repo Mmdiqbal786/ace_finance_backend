@@ -115,6 +115,7 @@ export class AuthService {
     userId: string,
     currentPassword: string,
     newPassword: string,
+    confirmPassword?: string,
   ): Promise<{ access_token: string; user: any }> {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
@@ -124,14 +125,10 @@ export class AuthService {
       throw new BadRequestException('Current password is incorrect.');
     }
 
-    if (!newPassword || newPassword.length < 8) {
-      throw new BadRequestException('New password must be at least 8 characters.');
-    }
-    if (!/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
-      throw new BadRequestException('New password must include at least one letter and one number.');
-    }
+    this.validateNewPassword(newPassword, confirmPassword);
+
     if (currentPassword === newPassword) {
-      throw new BadRequestException('New password must be different from the temporary password.');
+      throw new BadRequestException('New password must be different from your current password.');
     }
 
     await this.usersService.updatePassword(userId, newPassword, {

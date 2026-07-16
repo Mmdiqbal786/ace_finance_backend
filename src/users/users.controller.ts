@@ -8,6 +8,7 @@ import {
   Param,
   UseGuards,
   Request,
+  BadRequestException,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -37,6 +38,21 @@ export class UsersController {
     },
   ) {
     return this.usersService.create(body);
+  }
+
+  // Static "me" routes must be registered before ":id", otherwise Nest
+  // treats "me" as an id and applies the ADMIN role guard.
+  @Get('me')
+  async getMe(@Request() req: any) {
+    return this.usersService.getProfile(req.user.userId);
+  }
+
+  @Put('me')
+  async updateMe(@Request() req: any, @Body() body: { name?: string }) {
+    if (!body.name?.trim()) {
+      throw new BadRequestException('Name is required.');
+    }
+    return this.usersService.updateOwnProfile(req.user.userId, body.name);
   }
 
   @Put(':id')
@@ -71,11 +87,5 @@ export class UsersController {
   async delete(@Param('id') id: string) {
     await this.usersService.delete(id);
     return { message: 'User deleted successfully' };
-  }
-
-  // Allow any logged-in user to get their own profile
-  @Get('me')
-  async getMe(@Request() req: any) {
-    return req.user;
   }
 }

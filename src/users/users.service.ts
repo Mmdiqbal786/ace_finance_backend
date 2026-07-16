@@ -29,6 +29,50 @@ export class UsersService {
     return this.userModel.findById(id).exec();
   }
 
+  async getProfile(userId: string): Promise<{
+    id: string;
+    name: string;
+    email: string;
+    role: UserRole;
+  }> {
+    const user = await this.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+    return {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    };
+  }
+
+  async updateOwnProfile(userId: string, name: string): Promise<{
+    id: string;
+    name: string;
+    email: string;
+    role: UserRole;
+  }> {
+    const trimmed = name?.trim();
+    if (!trimmed || trimmed.length < 2) {
+      throw new ConflictException('Name must be at least 2 characters.');
+    }
+    if (trimmed.length > 80) {
+      throw new ConflictException('Name must be 80 characters or fewer.');
+    }
+
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, { $set: { name: trimmed } }, { new: true })
+      .lean()
+      .exec();
+    if (!user) throw new NotFoundException('User not found');
+
+    return {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    };
+  }
+
   private generateTemporaryPassword(): string {
     const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
     const lower = 'abcdefghijkmnopqrstuvwxyz';
