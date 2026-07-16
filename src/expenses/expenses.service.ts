@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Expense, ExpenseDocument } from './expense.schema';
@@ -6,6 +6,8 @@ import { CategoriesService } from '../categories/categories.service';
 import { ProjectsService } from '../projects/projects.service';
 import { CountriesService } from '../countries/countries.service';
 import { FxService } from '../fx/fx.service';
+import { MailService, ExpenseMailSummary } from '../mail/mail.service';
+import { UsersService } from '../users/users.service';
 
 export interface ActingUser {
   userId: string;
@@ -29,13 +31,93 @@ export interface CreateExpenseInput {
 
 @Injectable()
 export class ExpensesService {
+  private readonly logger = new Logger(ExpensesService.name);
+
   constructor(
     @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
     private readonly categoriesService: CategoriesService,
     private readonly projectsService: ProjectsService,
     private readonly countriesService: CountriesService,
     private readonly fxService: FxService,
+    private readonly mailService: MailService,
+    private readonly usersService: UsersService,
   ) {}
+
+  private toMailSummary(
+    expense: Expense | ExpenseDocument,
+    notes?: string,
+  ): ExpenseMailSummary {
+    return {
+      id: expense.id,
+      requesterName: expense.requesterName,
+      requesterEmail: expense.requesterEmail,
+      description: expense.description,
+      category: expense.category,
+      project: expense.project,
+      country: expense.country || '',
+      currency: expense.currency || 'USD',
+      originalAmount: Number(expense.originalAmount),
+      amountUsd: Number(expense.amount),
+      dueDate: expense.dueDate,
+      notes: notes || undefined,
+    };
+  }
+
+  /** Email failures must never block the expense workflow. */
+  private notify(label: string, task: Promise<{ sent: boolean; reason?: string }>) {
+    void task
+      .then((result) => {
+        if (!result.sent) {
+          this.logger.warn(`Workflow email (${label}) not sent: ${result.reason || 'unknown'}`);
+        }
+      })
+      .catch((err: any) => {
+        this.logger.error(`Workflow email (${label}) failed: ${err?.message || err}`);
+      });
+  }
+
+  private async notifyApproversOfSubmission(expense: Expense | ExpenseDocument) {
+    const summary = this.toMailSummary(expense);
+    this.notify(
+      `submitted→requester ${expense.id}`,
+      this.mailService.sendExpenseSubmittedToRequester(summary),
+    );
+
+    const approvers = await this.usersService.findActiveByRole('APPROVER');
+    if (approvers.length === 0) {
+      this.logger.warn(`No active APPROVER users to notify for expense ${expense.id}`);
+      return;
+    }
+    for (const approver of approvers) {
+      this.notify(
+        `submitted→approver ${approver.email} ${expense.id}`,
+        this.mailService.sendExpenseSubmittedToApprover({
+          to: approver.email,
+          approverName: approver.name,
+          expense: summary,
+        }),
+      );
+    }
+  }
+
+  private async notifyProcessorsOfApproval(expense: Expense | ExpenseDocument, notes?: string) {
+    const summary = this.toMailSummary(expense, notes);
+    const processors = await this.usersService.findActiveByRole('PROCESSOR');
+    if (processors.length === 0) {
+      this.logger.warn(`No active PROCESSOR users to notify for expense ${expense.id}`);
+      return;
+    }
+    for (const processor of processors) {
+      this.notify(
+        `approved→processor ${processor.email} ${expense.id}`,
+        this.mailService.sendExpenseApprovedToProcessor({
+          to: processor.email,
+          processorName: processor.name,
+          expense: summary,
+        }),
+      );
+    }
+  }
 
   async create(expenseData: CreateExpenseInput): Promise<Expense> {
     const category = await this.categoriesService.assertActiveName(expenseData.category);
@@ -85,7 +167,9 @@ export class ExpensesService {
       ],
     });
 
-    return newExpense.save();
+    const saved = await newExpense.save();
+    await this.notifyApproversOfSubmission(saved);
+    return saved;
   }
 
   async findAll(): Promise<Expense[]> {
@@ -126,7 +210,9 @@ export class ExpensesService {
       user: userName,
       notes: notes || 'Approved without review notes.',
     });
-    return expense.save();
+    const saved = await expense.save();
+    await this.notifyProcessorsOfApproval(saved, notes);
+    return saved;
   }
 
   async reject(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
@@ -147,7 +233,12 @@ export class ExpensesService {
       user: userName,
       notes: notes || 'Rejected without review notes.',
     });
-    return expense.save();
+    const saved = await expense.save();
+    this.notify(
+      `rejected-by-approver ${saved.id}`,
+      this.mailService.sendExpenseRejectedByApprover(this.toMailSummary(saved, notes)),
+    );
+    return saved;
   }
 
   private assertPayableStatus(status: string, action: string) {
@@ -186,7 +277,12 @@ export class ExpensesService {
       totalPaid: this.roundMoney(Number(expense.amount)),
       remaining: 0,
     });
-    return expense.save();
+    const saved = await expense.save();
+    this.notify(
+      `fully-paid ${saved.id}`,
+      this.mailService.sendExpenseFullyPaidToRequester(this.toMailSummary(saved, notes)),
+    );
+    return saved;
   }
 
   async partialPay(
@@ -218,10 +314,12 @@ export class ExpensesService {
     expense.processorNotes = notes ?? expense.processorNotes;
 
     const newRemaining = this.roundMoney(Number(expense.amount) - newPaid);
+    let becameFullyPaid = false;
     if (newRemaining <= 0) {
       expense.paidAmount = this.roundMoney(Number(expense.amount));
       expense.status = 'PROCESSED';
       expense.processedAt = now;
+      becameFullyPaid = true;
       expense.history.push({
         action: 'Processed & Paid',
         timestamp: now,
@@ -244,7 +342,14 @@ export class ExpensesService {
       });
     }
 
-    return expense.save();
+    const saved = await expense.save();
+    if (becameFullyPaid) {
+      this.notify(
+        `fully-paid (partial final) ${saved.id}`,
+        this.mailService.sendExpenseFullyPaidToRequester(this.toMailSummary(saved, notes)),
+      );
+    }
+    return saved;
   }
 
   async processorReject(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
@@ -263,7 +368,12 @@ export class ExpensesService {
       user: userName,
       notes: notes || 'Rejected without notes.',
     });
-    return expense.save();
+    const saved = await expense.save();
+    this.notify(
+      `rejected-by-processor ${saved.id}`,
+      this.mailService.sendExpenseRejectedByProcessor(this.toMailSummary(saved, notes)),
+    );
+    return saved;
   }
 
   private assertRequesterCanMutate(

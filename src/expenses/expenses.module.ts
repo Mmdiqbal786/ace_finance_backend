@@ -7,6 +7,8 @@ import { CategoriesModule } from '../categories/categories.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { CountriesModule } from '../countries/countries.module';
 import { FxModule } from '../fx/fx.module';
+import { MailModule } from '../mail/mail.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
@@ -15,6 +17,8 @@ import { FxModule } from '../fx/fx.module';
     ProjectsModule,
     CountriesModule,
     FxModule,
+    MailModule,
+    UsersModule,
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService],

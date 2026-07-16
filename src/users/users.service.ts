@@ -29,6 +29,20 @@ export class UsersService {
     return this.userModel.findById(id).exec();
   }
 
+  async findActiveByRole(
+    role: UserRole,
+  ): Promise<Array<{ name: string; email: string; role: UserRole }>> {
+    const users = await this.userModel
+      .find({ role, isActive: true }, { name: 1, email: 1, role: 1 })
+      .lean()
+      .exec();
+    return users.map((u) => ({
+      name: u.name,
+      email: u.email,
+      role: u.role,
+    }));
+  }
+
   async getProfile(userId: string): Promise<{
     id: string;
     name: string;
