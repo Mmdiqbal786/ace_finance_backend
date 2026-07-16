@@ -490,4 +490,84 @@ export class MailService {
       context: 'expense fully paid',
     });
   }
+
+  /** Reminder to approvers when a pending request has only 1 day left. */
+  async sendExpenseDueSoonToApprover(params: {
+    to: string;
+    approverName: string;
+    expense: ExpenseMailSummary;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const queueUrl = `${this.frontendBase()}/dashboard/approver/`;
+    const subject = `Reminder: expense due tomorrow — ${params.expense.id}`;
+    const text = [
+      `Hello ${params.approverName},`,
+      '',
+      'This expense request is still awaiting your approval and is due tomorrow (1 day left).',
+      '',
+      this.expenseDetailsText(params.expense),
+      '',
+      `Open approver queue: ${queueUrl}`,
+      '',
+      '— Aceolution Finance',
+    ].join('\n');
+
+    const html = this.wrapHtml(
+      'Reminder: expense due tomorrow',
+      `
+        <p>Hello <strong>${this.escapeHtml(params.approverName)}</strong>,</p>
+        <p>This expense request is still awaiting your approval and has <strong>1 day left</strong> until the due date.</p>
+        ${this.expenseDetailsHtml(params.expense)}
+      `,
+      'Open Approver Queue',
+      queueUrl,
+    );
+
+    return this.sendMail({
+      to: params.to,
+      subject,
+      text,
+      html,
+      context: 'expense due soon (approver)',
+    });
+  }
+
+  /** Reminder to processors when an approved request has only 1 day left and is not fully paid. */
+  async sendExpenseDueSoonToProcessor(params: {
+    to: string;
+    processorName: string;
+    expense: ExpenseMailSummary;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const queueUrl = `${this.frontendBase()}/dashboard/processor/`;
+    const subject = `Reminder: approved expense due tomorrow — ${params.expense.id}`;
+    const text = [
+      `Hello ${params.processorName},`,
+      '',
+      'This expense request is approved and still awaiting payment. It is due tomorrow (1 day left).',
+      '',
+      this.expenseDetailsText(params.expense),
+      '',
+      `Open processor queue: ${queueUrl}`,
+      '',
+      '— Aceolution Finance',
+    ].join('\n');
+
+    const html = this.wrapHtml(
+      'Reminder: approved expense due tomorrow',
+      `
+        <p>Hello <strong>${this.escapeHtml(params.processorName)}</strong>,</p>
+        <p>This expense request is <strong>already approved</strong> and still awaiting payment. It has <strong>1 day left</strong> until the due date.</p>
+        ${this.expenseDetailsHtml(params.expense)}
+      `,
+      'Open Processor Queue',
+      queueUrl,
+    );
+
+    return this.sendMail({
+      to: params.to,
+      subject,
+      text,
+      html,
+      context: 'expense due soon (processor)',
+    });
+  }
 }
