@@ -181,11 +181,10 @@ export class ExpensesService {
       action: 'Processed & Paid',
       timestamp: now,
       user: userName,
-      notes:
-        notes ||
-        (remaining > 0
-          ? `Marked as fully paid. Final payout $${remaining.toFixed(2)}.`
-          : 'Marked as processed.'),
+      notes: notes || (remaining > 0 ? 'Marked as fully paid.' : 'Marked as processed.'),
+      paymentAmount: remaining > 0 ? remaining : this.roundMoney(Number(expense.amount)),
+      totalPaid: this.roundMoney(Number(expense.amount)),
+      remaining: 0,
     });
     return expense.save();
   }
@@ -227,9 +226,10 @@ export class ExpensesService {
         action: 'Processed & Paid',
         timestamp: now,
         user: userName,
-        notes:
-          notes ||
-          `Final partial payment of $${amount.toFixed(2)}. Fully paid $${expense.paidAmount.toFixed(2)}.`,
+        notes: notes || 'Final payment — request fully paid.',
+        paymentAmount: amount,
+        totalPaid: this.roundMoney(Number(expense.amount)),
+        remaining: 0,
       });
     } else {
       expense.status = 'PARTIALLY_PAID';
@@ -237,9 +237,10 @@ export class ExpensesService {
         action: 'Partially Paid',
         timestamp: now,
         user: userName,
-        notes:
-          notes ||
-          `Partial payment of $${amount.toFixed(2)}. Paid $${newPaid.toFixed(2)} of $${Number(expense.amount).toFixed(2)}. Remaining $${newRemaining.toFixed(2)}.`,
+        notes: notes || undefined,
+        paymentAmount: amount,
+        totalPaid: newPaid,
+        remaining: newRemaining,
       });
     }
 

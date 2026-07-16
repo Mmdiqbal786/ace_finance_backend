@@ -16,6 +16,18 @@ export class HistoryLog {
 
   @Prop()
   notes?: string;
+
+  /** USD paid in this step (partial or final payout) */
+  @Prop()
+  paymentAmount?: number;
+
+  /** Cumulative USD paid after this step */
+  @Prop()
+  totalPaid?: number;
+
+  /** USD still owed after this step */
+  @Prop()
+  remaining?: number;
 }
 
 const HistoryLogSchema = SchemaFactory.createForClass(HistoryLog);
