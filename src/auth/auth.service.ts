@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { UsersService } from '../users/users.service';
@@ -25,11 +25,13 @@ export class AuthService {
 
   async login(email: string, password: string) {
     const user = await this.validateUser(email, password);
+    const mustChangePassword = Boolean(user.mustChangePassword);
     const payload = {
       sub: user._id.toString(),
       name: user.name,
       email: user.email,
       role: user.role,
+      mustChangePassword,
     };
     return {
       access_token: this.jwtService.sign(payload),
@@ -38,6 +40,57 @@ export class AuthService {
         name: user.name,
         email: user.email,
         role: user.role,
+        mustChangePassword,
+      },
+    };
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ access_token: string; user: any }> {
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('User not found');
+
+    const currentOk = await bcrypt.compare(currentPassword, user.password);
+    if (!currentOk) {
+      throw new BadRequestException('Current password is incorrect.');
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+      throw new BadRequestException('New password must be at least 8 characters.');
+    }
+    if (!/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      throw new BadRequestException('New password must include at least one letter and one number.');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('New password must be different from the temporary password.');
+    }
+
+    await this.usersService.updatePassword(userId, newPassword, {
+      requireChangeOnNextLogin: false,
+    });
+
+    const refreshed = await this.usersService.findById(userId);
+    if (!refreshed) throw new UnauthorizedException('User not found');
+
+    const payload = {
+      sub: refreshed._id.toString(),
+      name: refreshed.name,
+      email: refreshed.email,
+      role: refreshed.role,
+      mustChangePassword: false,
+    };
+
+    return {
+      access_token: this.jwtService.sign(payload),
+      user: {
+        id: refreshed._id.toString(),
+        name: refreshed.name,
+        email: refreshed.email,
+        role: refreshed.role,
+        mustChangePassword: false,
       },
     };
   }

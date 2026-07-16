@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Expense, ExpenseDocument } from './expense.schema';
@@ -59,7 +59,7 @@ export class ExpensesService {
 
     const newExpense = new this.expenseModel({
       requesterName: expenseData.requesterName,
-      requesterEmail: expenseData.requesterEmail,
+      requesterEmail: expenseData.requesterEmail.trim().toLowerCase(),
       description: expenseData.description,
       date: expenseData.date,
       dueDate: expenseData.dueDate,
@@ -90,6 +90,14 @@ export class ExpensesService {
 
   async findAll(): Promise<Expense[]> {
     return this.expenseModel.find().sort({ submittedAt: -1 }).lean().exec();
+  }
+
+  async findMine(email: string): Promise<Expense[]> {
+    return this.expenseModel
+      .find({ requesterEmail: email.toLowerCase() })
+      .sort({ submittedAt: -1 })
+      .lean()
+      .exec();
   }
 
   async findOne(id: string): Promise<Expense> {
@@ -257,6 +265,22 @@ export class ExpensesService {
     return expense.save();
   }
 
+  private assertRequesterCanMutate(
+    expense: ExpenseDocument,
+    actingUser: ActingUser | undefined,
+    action: string,
+  ) {
+    if (!actingUser || actingUser.role !== 'REQUESTER') return;
+    if (expense.requesterEmail.toLowerCase() !== actingUser.email.toLowerCase()) {
+      throw new ForbiddenException(`You can only ${action} your own expense requests`);
+    }
+    if (expense.status !== 'PENDING_APPROVER') {
+      throw new BadRequestException(
+        `You can only ${action} requests that are still awaiting manager approval`,
+      );
+    }
+  }
+
   async update(
     id: string,
     updateData: {
@@ -274,6 +298,7 @@ export class ExpensesService {
   ): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    this.assertRequesterCanMutate(expense, actingUser, 'edit');
 
     const now = new Date().toISOString();
     const changes: string[] = [];
@@ -282,7 +307,11 @@ export class ExpensesService {
       changes.push(`Name: "${expense.requesterName}" ➔ "${updateData.requesterName}"`);
       expense.requesterName = updateData.requesterName;
     }
-    if (updateData.requesterEmail && updateData.requesterEmail !== expense.requesterEmail) {
+    if (
+      actingUser?.role !== 'REQUESTER' &&
+      updateData.requesterEmail &&
+      updateData.requesterEmail !== expense.requesterEmail
+    ) {
       changes.push(`Email: "${expense.requesterEmail}" ➔ "${updateData.requesterEmail}"`);
       expense.requesterEmail = updateData.requesterEmail;
     }
@@ -356,7 +385,11 @@ export class ExpensesService {
     return expense.toObject() as Expense;
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, actingUser?: ActingUser): Promise<void> {
+    const expense = await this.expenseModel.findOne({ id }).exec();
+    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    this.assertRequesterCanMutate(expense, actingUser, 'delete');
+
     const result = await this.expenseModel.deleteOne({ id }).exec();
     if (result.deletedCount === 0) throw new NotFoundException(`Expense with ID ${id} not found`);
   }

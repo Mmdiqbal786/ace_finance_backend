@@ -47,6 +47,13 @@ export class ExpensesController {
     return this.expensesService.getStats();
   }
 
+  // Protected — logged-in user's own expenses only
+  @Get('mine')
+  @UseGuards(JwtAuthGuard)
+  async findMine(@Request() req: any) {
+    return this.expensesService.findMine(req.user.email);
+  }
+
   // Public — allow status tracking by ID
   @Get(':id')
   async findOne(@Param('id') id: string) {
@@ -97,19 +104,19 @@ export class ExpensesController {
     return this.expensesService.processorReject(id, notes, req.user);
   }
 
-  // APPROVER, PROCESSOR, or ADMIN
+  // APPROVER, PROCESSOR, ADMIN, or REQUESTER (own pending only)
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('APPROVER', 'PROCESSOR', 'ADMIN')
+  @Roles('APPROVER', 'PROCESSOR', 'ADMIN', 'REQUESTER')
   async update(@Param('id') id: string, @Body() body: any, @Request() req: any) {
     return this.expensesService.update(id, body, req.user);
   }
 
-  // ADMIN only
+  // ADMIN / APPROVER / PROCESSOR, or REQUESTER (own pending only)
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN', 'APPROVER', 'PROCESSOR')
-  async delete(@Param('id') id: string) {
-    return this.expensesService.delete(id);
+  @Roles('ADMIN', 'APPROVER', 'PROCESSOR', 'REQUESTER')
+  async delete(@Param('id') id: string, @Request() req: any) {
+    return this.expensesService.delete(id, req.user);
   }
 }

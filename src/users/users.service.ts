@@ -3,11 +3,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { User, UserDocument, UserRole } from './user.schema';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private readonly mailService: MailService,
   ) {}
 
   async findAll(): Promise<any[]> {
@@ -26,26 +28,67 @@ export class UsersService {
     return this.userModel.findById(id).exec();
   }
 
+  private generateTemporaryPassword(): string {
+    const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lower = 'abcdefghijkmnopqrstuvwxyz';
+    const digits = '23456789';
+    const all = upper + lower + digits;
+    const pick = (set: string) => set[Math.floor(Math.random() * set.length)];
+    const chars = [pick(upper), pick(lower), pick(digits)];
+    for (let i = 0; i < 9; i++) chars.push(pick(all));
+    for (let i = chars.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [chars[i], chars[j]] = [chars[j], chars[i]];
+    }
+    return chars.join('');
+  }
+
+  private resolveTemporaryPassword(password?: string): string {
+    if (typeof password === 'string' && password.trim().length >= 8) {
+      return password.trim();
+    }
+    return this.generateTemporaryPassword();
+  }
+
   async create(data: {
     name: string;
     email: string;
-    password: string;
     role: UserRole;
+    password?: string;
   }): Promise<any> {
     const existing = await this.findByEmail(data.email);
     if (existing) {
       throw new ConflictException(`User with email ${data.email} already exists`);
     }
-    const hashed = await bcrypt.hash(data.password, 10);
+
+    const temporaryPassword = this.resolveTemporaryPassword(data.password);
+
+    const hashed = await bcrypt.hash(temporaryPassword, 10);
     const user = new this.userModel({
       name: data.name,
       email: data.email.toLowerCase(),
       password: hashed,
       role: data.role,
+      mustChangePassword: true,
     });
     const saved = await user.save();
     const { password: _, ...result } = saved.toObject();
-    return result;
+
+    const mailResult = await this.mailService.sendWelcomeEmail({
+      to: result.email,
+      name: result.name,
+      email: result.email,
+      temporaryPassword,
+      role: result.role,
+    });
+
+    return {
+      ...result,
+      welcomeEmailSent: mailResult.sent,
+      welcomeEmailError: mailResult.sent ? undefined : mailResult.reason,
+      // Only return temp password when email failed, so admin can share it manually
+      temporaryPassword: mailResult.sent ? undefined : temporaryPassword,
+    };
   }
 
   async update(
@@ -60,9 +103,23 @@ export class UsersService {
     return user;
   }
 
-  async updatePassword(id: string, newPassword: string): Promise<void> {
+  async updatePassword(
+    id: string,
+    newPassword: string,
+    opts?: { requireChangeOnNextLogin?: boolean },
+  ): Promise<void> {
     const hashed = await bcrypt.hash(newPassword, 10);
-    await this.userModel.findByIdAndUpdate(id, { $set: { password: hashed } }).exec();
+    const $set: { password: string; mustChangePassword?: boolean } = { password: hashed };
+    if (opts?.requireChangeOnNextLogin) {
+      $set.mustChangePassword = true;
+    } else if (opts?.requireChangeOnNextLogin === false) {
+      $set.mustChangePassword = false;
+    }
+    await this.userModel.findByIdAndUpdate(id, { $set }).exec();
+  }
+
+  async clearMustChangePassword(id: string): Promise<void> {
+    await this.userModel.findByIdAndUpdate(id, { $set: { mustChangePassword: false } }).exec();
   }
 
   async delete(id: string): Promise<void> {
@@ -79,11 +136,13 @@ export class UsersService {
     if (count > 0) {
       return { created: false, message: 'Users already exist. Seed skipped.' };
     }
-    await this.create({
+    const hashed = await bcrypt.hash('Admin@1234', 10);
+    await this.userModel.create({
       name: 'Admin',
       email: 'admin@acefinance.com',
-      password: 'Admin@1234',
+      password: hashed,
       role: 'ADMIN',
+      mustChangePassword: false,
     });
     return {
       created: true,

@@ -32,8 +32,8 @@ export class UsersController {
     body: {
       name: string;
       email: string;
-      password: string;
-      role: 'ADMIN' | 'APPROVER' | 'PROCESSOR';
+      role: 'ADMIN' | 'APPROVER' | 'PROCESSOR' | 'REQUESTER';
+      password?: string;
     },
   ) {
     return this.usersService.create(body);
@@ -46,19 +46,24 @@ export class UsersController {
     @Body()
     body: {
       name?: string;
-      role?: 'ADMIN' | 'APPROVER' | 'PROCESSOR';
+      role?: 'ADMIN' | 'APPROVER' | 'PROCESSOR' | 'REQUESTER';
       isActive?: boolean;
       password?: string;
     },
   ) {
     const { password, ...rest } = body;
     if (password) {
-      await this.usersService.updatePassword(id, password);
+      await this.usersService.updatePassword(id, password, {
+        requireChangeOnNextLogin: true,
+      });
     }
     if (Object.keys(rest).length > 0) {
       return this.usersService.update(id, rest);
     }
-    return this.usersService.findById(id);
+    const user = await this.usersService.findById(id);
+    if (!user) return null;
+    const { password: _, ...safe } = user.toObject();
+    return safe;
   }
 
   @Delete(':id')
