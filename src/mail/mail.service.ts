@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as dns from 'dns';
 import * as nodemailer from 'nodemailer';
+import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 
 export type ExpenseMailSummary = {
   id: string;
@@ -125,21 +127,24 @@ export class MailService {
       const user = this.config.get<string>('SMTP_USER')?.trim();
       const pass = this.config.get<string>('SMTP_PASS')?.replace(/\s+/g, '');
 
-      const transportOptions: nodemailer.TransportOptions = {
-        host,
+      // Force IPv4 — Render free tier often cannot reach Gmail AAAA (IPv6) addresses
+      const { address: ipv4Host } = await dns.promises.lookup(host, { family: 4 });
+      this.logger.log(`SMTP connecting via IPv4 ${ipv4Host}:${port} (${host})`);
+
+      const transportOptions: SMTPTransport.Options = {
+        host: ipv4Host,
         port,
         secure: port === 465,
         requireTLS: port === 587,
-        // Render free tier often cannot reach Gmail over IPv6 (ENETUNREACH)
-        family: 4,
         auth: user && pass ? { user, pass } : undefined,
         connectionTimeout: 15_000,
         greetingTimeout: 15_000,
         socketTimeout: 20_000,
         tls: {
+          servername: host, // SNI must stay as hostname, not raw IP
           minVersion: 'TLSv1.2',
         },
-      } as nodemailer.TransportOptions;
+      };
 
       const transporter = nodemailer.createTransport(transportOptions);
 
