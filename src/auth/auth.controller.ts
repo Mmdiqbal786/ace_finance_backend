@@ -11,6 +11,51 @@ export class AuthController {
     return this.authService.login(body.email, body.password);
   }
 
+  @Post('verify-2fa')
+  async verify2fa(
+    @Body() body: { challengeToken: string; code: string; method?: 'email' | 'totp' },
+  ) {
+    return this.authService.verifyLogin2fa(body);
+  }
+
+  @Post('resend-otp')
+  async resendOtp(@Body() body: { challengeToken: string }) {
+    return this.authService.resendLoginOtp(body.challengeToken);
+  }
+
+  @Get('totp/status')
+  @UseGuards(JwtAuthGuard)
+  async totpStatus(@Request() req: any) {
+    return this.authService.getTotpStatus(req.user.userId, req.user.role);
+  }
+
+  @Post('totp/setup')
+  @UseGuards(JwtAuthGuard)
+  async totpSetup(@Request() req: any) {
+    return this.authService.setupTotp(req.user.userId, req.user.role);
+  }
+
+  @Post('totp/enable')
+  @UseGuards(JwtAuthGuard)
+  async totpEnable(@Request() req: any, @Body() body: { code: string }) {
+    return this.authService.enableTotp(req.user.userId, req.user.role, body.code);
+  }
+
+  @Post('totp/disable/send-code')
+  @UseGuards(JwtAuthGuard)
+  async totpDisableSendCode(@Request() req: any, @Body() body: { password: string }) {
+    return this.authService.requestDisableTotp(req.user.userId, body.password);
+  }
+
+  @Post('totp/disable')
+  @UseGuards(JwtAuthGuard)
+  async totpDisable(
+    @Request() req: any,
+    @Body() body: { password: string; code?: string },
+  ) {
+    return this.authService.disableTotp(req.user.userId, req.user.role, body);
+  }
+
   @Post('change-password')
   @UseGuards(JwtAuthGuard)
   async changePassword(

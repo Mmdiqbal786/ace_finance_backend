@@ -221,6 +221,52 @@ export class UsersService {
     });
   }
 
+  private hashOtp(code: string): string {
+    return crypto.createHash('sha256').update(code.trim()).digest('hex');
+  }
+
+  async setLoginOtp(userId: string, code: string, ttlMs = 10 * 60 * 1000): Promise<void> {
+    await this.userModel.findByIdAndUpdate(userId, {
+      $set: {
+        loginOtpHash: this.hashOtp(code),
+        loginOtpExpires: new Date(Date.now() + ttlMs),
+      },
+    });
+  }
+
+  async verifyLoginOtp(userId: string, code: string): Promise<boolean> {
+    const user = await this.findById(userId);
+    if (!user?.loginOtpHash || !user.loginOtpExpires) return false;
+    if (user.loginOtpExpires.getTime() < Date.now()) return false;
+    return user.loginOtpHash === this.hashOtp(code);
+  }
+
+  async clearLoginOtp(userId: string): Promise<void> {
+    await this.userModel.findByIdAndUpdate(userId, {
+      $unset: { loginOtpHash: '', loginOtpExpires: '' },
+    });
+  }
+
+  async setTotpPendingSecret(userId: string, secret: string): Promise<void> {
+    await this.userModel.findByIdAndUpdate(userId, {
+      $set: { totpPendingSecret: secret },
+    });
+  }
+
+  async enableTotp(userId: string, secret: string): Promise<void> {
+    await this.userModel.findByIdAndUpdate(userId, {
+      $set: { totpSecret: secret, totpEnabled: true },
+      $unset: { totpPendingSecret: '' },
+    });
+  }
+
+  async disableTotp(userId: string): Promise<void> {
+    await this.userModel.findByIdAndUpdate(userId, {
+      $set: { totpEnabled: false },
+      $unset: { totpSecret: '', totpPendingSecret: '' },
+    });
+  }
+
   async delete(id: string): Promise<void> {
     const result = await this.userModel.deleteOne({ _id: id }).exec();
     if (result.deletedCount === 0) throw new NotFoundException(`User ${id} not found`);
