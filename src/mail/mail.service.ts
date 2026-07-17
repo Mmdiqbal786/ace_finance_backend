@@ -121,21 +121,28 @@ export class MailService {
 
     try {
       const port = Number(this.config.get<string>('SMTP_PORT') || 587);
+      const host = this.config.get<string>('SMTP_HOST') || 'smtp.gmail.com';
+      const user = this.config.get<string>('SMTP_USER')?.trim();
+      const pass = this.config.get<string>('SMTP_PASS')?.replace(/\s+/g, '');
+
       const transporter = nodemailer.createTransport({
-        host: this.config.get<string>('SMTP_HOST'),
+        host,
         port,
         secure: port === 465,
-        auth: {
-          user: this.config.get<string>('SMTP_USER'),
-          pass: this.config.get<string>('SMTP_PASS'),
-        },
+        requireTLS: port === 587,
+        auth: user && pass ? { user, pass } : undefined,
         connectionTimeout: 15_000,
         greetingTimeout: 15_000,
         socketTimeout: 20_000,
+        tls: {
+          // Gmail on Render sometimes fails if SNI/certs are picky
+          minVersion: 'TLSv1.2',
+        },
       });
 
       const from =
-        this.config.get<string>('SMTP_FROM') ||
+        this.config.get<string>('SMTP_FROM')?.trim() ||
+        user ||
         this.config.getOrThrow<string>('SMTP_USER');
 
       await transporter.sendMail({
@@ -148,10 +155,11 @@ export class MailService {
 
       return { sent: true };
     } catch (err: any) {
+      const reason = err?.response || err?.message || 'Email send failed';
       this.logger.error(
-        `Failed to send ${params.context} email to ${params.to}: ${err.message}`,
+        `Failed to send ${params.context} email to ${params.to}: ${reason}`,
       );
-      return { sent: false, reason: err.message || 'Email send failed' };
+      return { sent: false, reason: String(reason) };
     }
   }
 
