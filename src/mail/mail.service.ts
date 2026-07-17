@@ -26,6 +26,7 @@ export class MailService {
   constructor(private readonly config: ConfigService) {}
 
   private isConfigured(): boolean {
+    if (this.config.get<string>('RESEND_API_KEY')?.trim()) return true;
     return Boolean(
       this.config.get<string>('SMTP_HOST') &&
         this.config.get<string>('SMTP_USER') &&
@@ -105,6 +106,103 @@ export class MailService {
     return lines.join('\n');
   }
 
+  /** Resend HTTP API — works on Render free (SMTP ports are blocked). */
+  private async sendViaResend(params: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+    context: string;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const apiKey = this.config.get<string>('RESEND_API_KEY')?.trim();
+    if (!apiKey) return { sent: false, reason: 'RESEND_API_KEY missing' };
+
+    const from =
+      this.config.get<string>('RESEND_FROM')?.trim() ||
+      this.config.get<string>('SMTP_FROM')?.trim() ||
+      'Aceolution Finance <onboarding@resend.dev>';
+
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from,
+          to: [params.to.trim()],
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const reason =
+          (body as any)?.message ||
+          (Array.isArray((body as any)?.error) ? (body as any).error.join(' ') : '') ||
+          `Resend HTTP ${res.status}`;
+        this.logger.error(`Failed to send ${params.context} via Resend to ${params.to}: ${reason}`);
+        return { sent: false, reason: String(reason) };
+      }
+      this.logger.log(`Sent ${params.context} email via Resend to ${params.to}`);
+      return { sent: true };
+    } catch (err: any) {
+      const reason = err?.message || 'Resend request failed';
+      this.logger.error(`Failed to send ${params.context} via Resend to ${params.to}: ${reason}`);
+      return { sent: false, reason: String(reason) };
+    }
+  }
+
+  private async sendViaSmtp(params: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+    context: string;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const port = Number(this.config.get<string>('SMTP_PORT') || 587);
+    const host = this.config.get<string>('SMTP_HOST') || 'smtp.gmail.com';
+    const user = this.config.get<string>('SMTP_USER')?.trim();
+    const pass = this.config.get<string>('SMTP_PASS')?.replace(/\s+/g, '');
+
+    // Force IPv4 — some hosts cannot reach Gmail AAAA addresses
+    const { address: ipv4Host } = await dns.promises.lookup(host, { family: 4 });
+    this.logger.log(`SMTP connecting via IPv4 ${ipv4Host}:${port} (${host})`);
+
+    const transportOptions: SMTPTransport.Options = {
+      host: ipv4Host,
+      port,
+      secure: port === 465,
+      requireTLS: port === 587,
+      auth: user && pass ? { user, pass } : undefined,
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 20_000,
+      tls: {
+        servername: host,
+        minVersion: 'TLSv1.2',
+      },
+    };
+
+    const transporter = nodemailer.createTransport(transportOptions);
+    const from =
+      this.config.get<string>('SMTP_FROM')?.trim() ||
+      user ||
+      this.config.getOrThrow<string>('SMTP_USER');
+
+    await transporter.sendMail({
+      from: `"Aceolution Finance" <${from}>`,
+      to: params.to.trim(),
+      subject: params.subject,
+      text: params.text,
+      html: params.html,
+    });
+
+    return { sent: true };
+  }
+
   private async sendMail(params: {
     to: string;
     subject: string;
@@ -117,57 +215,26 @@ export class MailService {
     }
 
     if (!this.isConfigured()) {
-      this.logger.warn(`SMTP not configured — ${params.context} email to ${params.to} was not sent.`);
-      return { sent: false, reason: 'SMTP not configured' };
+      this.logger.warn(`Mail not configured — ${params.context} email to ${params.to} was not sent.`);
+      return { sent: false, reason: 'Mail not configured' };
+    }
+
+    // Prefer Resend on Render free (outbound SMTP 25/465/587 is blocked)
+    if (this.config.get<string>('RESEND_API_KEY')?.trim()) {
+      return this.sendViaResend(params);
     }
 
     try {
-      const port = Number(this.config.get<string>('SMTP_PORT') || 587);
-      const host = this.config.get<string>('SMTP_HOST') || 'smtp.gmail.com';
-      const user = this.config.get<string>('SMTP_USER')?.trim();
-      const pass = this.config.get<string>('SMTP_PASS')?.replace(/\s+/g, '');
-
-      // Force IPv4 — Render free tier often cannot reach Gmail AAAA (IPv6) addresses
-      const { address: ipv4Host } = await dns.promises.lookup(host, { family: 4 });
-      this.logger.log(`SMTP connecting via IPv4 ${ipv4Host}:${port} (${host})`);
-
-      const transportOptions: SMTPTransport.Options = {
-        host: ipv4Host,
-        port,
-        secure: port === 465,
-        requireTLS: port === 587,
-        auth: user && pass ? { user, pass } : undefined,
-        connectionTimeout: 15_000,
-        greetingTimeout: 15_000,
-        socketTimeout: 20_000,
-        tls: {
-          servername: host, // SNI must stay as hostname, not raw IP
-          minVersion: 'TLSv1.2',
-        },
-      };
-
-      const transporter = nodemailer.createTransport(transportOptions);
-
-      const from =
-        this.config.get<string>('SMTP_FROM')?.trim() ||
-        user ||
-        this.config.getOrThrow<string>('SMTP_USER');
-
-      await transporter.sendMail({
-        from: `"Aceolution Finance" <${from}>`,
-        to: params.to.trim(),
-        subject: params.subject,
-        text: params.text,
-        html: params.html,
-      });
-
-      return { sent: true };
+      return await this.sendViaSmtp(params);
     } catch (err: any) {
       const reason = err?.response || err?.message || 'Email send failed';
       this.logger.error(
         `Failed to send ${params.context} email to ${params.to}: ${reason}`,
       );
-      return { sent: false, reason: String(reason) };
+      const hint = /timeout|ENETUNREACH|ECONNREFUSED/i.test(String(reason))
+        ? `${reason}. On Render free tier, SMTP is blocked — set RESEND_API_KEY (HTTPS email API) instead.`
+        : String(reason);
+      return { sent: false, reason: hint };
     }
   }
 
