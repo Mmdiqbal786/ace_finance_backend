@@ -148,6 +148,23 @@ export class ExpensesController {
     return this.expensesService.reject(id, notes, req.user);
   }
 
+  // APPROVER / PROCESSOR / ADMIN — return for changes (requester) or undo approval (approver)
+  @Patch(':id/request-changes')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('APPROVER', 'PROCESSOR', 'ADMIN')
+  async requestChanges(
+    @Param('id') id: string,
+    @Body() body: { notes?: string; target?: 'requester' | 'approver' },
+    @Request() req: any,
+  ) {
+    return this.expensesService.requestChanges(
+      id,
+      body.notes || '',
+      body.target || 'requester',
+      req.user,
+    );
+  }
+
   // PROCESSOR or ADMIN only — mark fully paid (receipt required)
   @Patch(':id/process')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -218,18 +235,18 @@ export class ExpensesController {
     return this.expensesService.processorReject(id, notes, req.user);
   }
 
-  // APPROVER, PROCESSOR, ADMIN, or REQUESTER (own pending only)
+  // REQUESTER (own pending / changes-requested) or ADMIN — staff use Request Changes instead of edit
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('APPROVER', 'PROCESSOR', 'ADMIN', 'REQUESTER')
+  @Roles('ADMIN', 'REQUESTER')
   async update(@Param('id') id: string, @Body() body: any, @Request() req: any) {
     return this.expensesService.update(id, body, req.user);
   }
 
-  // ADMIN / APPROVER / PROCESSOR, or REQUESTER (own pending only)
+  // ADMIN / APPROVER / PROCESSOR — requesters cannot delete
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN', 'APPROVER', 'PROCESSOR', 'REQUESTER')
+  @Roles('ADMIN', 'APPROVER', 'PROCESSOR')
   async delete(@Param('id') id: string, @Request() req: any) {
     return this.expensesService.delete(id, req.user);
   }

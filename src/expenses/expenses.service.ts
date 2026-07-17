@@ -301,6 +301,114 @@ export class ExpensesService {
     return saved;
   }
 
+  /**
+   * Approver: PENDING_APPROVER → CHANGES_REQUESTED (back to requester only).
+   * Processor: APPROVED_APPROVER → PENDING_APPROVER (approver) or CHANGES_REQUESTED (requester).
+   */
+  async requestChanges(
+    id: string,
+    notes: string,
+    target: 'requester' | 'approver',
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
+    const trimmedNotes = String(notes || '').trim();
+    if (!trimmedNotes) {
+      throw new BadRequestException('Notes are required when requesting changes.');
+    }
+    if (target !== 'requester' && target !== 'approver') {
+      throw new BadRequestException('Target must be "requester" or "approver".');
+    }
+
+    const expense = await this.expenseModel.findOne({ id }).exec();
+    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+
+    const role = actingUser?.role || '';
+    const isApproverRole = role === 'APPROVER' || role === 'ADMIN';
+    const isProcessorRole = role === 'PROCESSOR' || role === 'ADMIN';
+
+    if (expense.status === 'PENDING_APPROVER') {
+      if (!isApproverRole) {
+        throw new ForbiddenException('Only approvers can request changes on pending requests.');
+      }
+      if (target !== 'requester') {
+        throw new BadRequestException('Approvers can only send requests back to the requester.');
+      }
+    } else if (expense.status === 'APPROVED_APPROVER') {
+      if (!isProcessorRole) {
+        throw new ForbiddenException('Only processors can request changes on approved requests.');
+      }
+      if (Number(expense.paidAmount || 0) > 0) {
+        throw new BadRequestException(
+          'Cannot request changes after a partial payment has been recorded.',
+        );
+      }
+    } else {
+      throw new BadRequestException(
+        `Cannot request changes. Current status is ${expense.status}`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Staff';
+
+    if (target === 'approver') {
+      expense.status = 'PENDING_APPROVER';
+      expense.approverNotes = undefined;
+      expense.approvedAt = undefined;
+      expense.processorNotes = undefined;
+      expense.changeRequestNotes = trimmedNotes;
+      expense.changeRequestedAt = now;
+      expense.changeRequestedBy = userName;
+      expense.history.push({
+        action: 'Returned to Approver',
+        timestamp: now,
+        user: userName,
+        notes: trimmedNotes,
+      });
+      const saved = await expense.save();
+      await this.notifyApproversOfReturn(saved, trimmedNotes);
+      return saved;
+    }
+
+    expense.status = 'CHANGES_REQUESTED';
+    expense.changeRequestNotes = trimmedNotes;
+    expense.changeRequestedAt = now;
+    expense.changeRequestedBy = userName;
+    expense.history.push({
+      action: 'Requested Changes',
+      timestamp: now,
+      user: userName,
+      notes: trimmedNotes,
+    });
+    const saved = await expense.save();
+    this.notify(
+      `changes-requested ${saved.id}`,
+      this.mailService.sendExpenseChangesRequestedToRequester(
+        this.toMailSummary(saved, trimmedNotes),
+      ),
+    );
+    return saved;
+  }
+
+  private async notifyApproversOfReturn(expense: Expense | ExpenseDocument, notes: string) {
+    const summary = this.toMailSummary(expense, notes);
+    const approvers = await this.usersService.findActiveByRole('APPROVER');
+    if (approvers.length === 0) {
+      this.logger.warn(`No active APPROVER users to notify for returned expense ${expense.id}`);
+      return;
+    }
+    for (const approver of approvers) {
+      this.notify(
+        `returned→approver ${approver.email} ${expense.id}`,
+        this.mailService.sendExpenseReturnedToApprover({
+          to: approver.email,
+          approverName: approver.name,
+          expense: summary,
+        }),
+      );
+    }
+  }
+
   private assertPayableStatus(status: string, action: string) {
     if (status !== 'APPROVED_APPROVER' && status !== 'PARTIALLY_PAID') {
       throw new BadRequestException(`Cannot ${action} expense. Current status is ${status}`);
@@ -480,20 +588,58 @@ export class ExpensesService {
     return saved;
   }
 
-  private assertRequesterCanMutate(
+  private assertCanMutateExpenseDetails(
     expense: ExpenseDocument,
     actingUser: ActingUser | undefined,
     action: string,
   ) {
-    if (!actingUser || actingUser.role !== 'REQUESTER') return;
-    if (expense.requesterEmail.toLowerCase() !== actingUser.email.toLowerCase()) {
-      throw new ForbiddenException(`You can only ${action} your own expense requests`);
+    if (!actingUser) {
+      throw new ForbiddenException(`You must be signed in to ${action} this expense`);
     }
-    if (expense.status !== 'PENDING_APPROVER') {
-      throw new BadRequestException(
-        `You can only ${action} requests that are still awaiting manager approval`,
+
+    // Approver / Processor send requests back via Request Changes — they do not edit the form
+    if (actingUser.role === 'APPROVER' || actingUser.role === 'PROCESSOR') {
+      throw new ForbiddenException(
+        `Approvers and processors cannot ${action} expense details. Use Request Changes instead.`,
       );
     }
+
+    if (actingUser.role === 'REQUESTER') {
+      if (expense.requesterEmail.toLowerCase() !== actingUser.email.toLowerCase()) {
+        throw new ForbiddenException(`You can only ${action} your own expense requests`);
+      }
+      if (action === 'edit') {
+        // Edit only after Approver/Processor Request Changes
+        if (expense.status !== 'CHANGES_REQUESTED') {
+          throw new BadRequestException(
+            'You can only edit a request after staff has requested changes.',
+          );
+        }
+        return;
+      }
+      throw new ForbiddenException(`Requesters cannot ${action} expense requests.`);
+    }
+
+    // ADMIN may correct details only when requester would be allowed to edit
+    if (actingUser.role === 'ADMIN') {
+      if (action === 'edit' && expense.status !== 'CHANGES_REQUESTED') {
+        throw new BadRequestException(
+          'Expense details can only be edited when status is Changes Requested.',
+        );
+      }
+      if (
+        action === 'delete' &&
+        expense.status !== 'PENDING_APPROVER' &&
+        expense.status !== 'CHANGES_REQUESTED'
+      ) {
+        throw new BadRequestException(
+          `Cannot ${action} this expense after it has been approved, paid, or rejected`,
+        );
+      }
+      return;
+    }
+
+    throw new ForbiddenException(`You are not allowed to ${action} this expense`);
   }
 
   async update(
@@ -513,8 +659,9 @@ export class ExpensesService {
   ): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    this.assertRequesterCanMutate(expense, actingUser, 'edit');
+    this.assertCanMutateExpenseDetails(expense, actingUser, 'edit');
 
+    const wasChangesRequested = expense.status === 'CHANGES_REQUESTED';
     const now = new Date().toISOString();
     const changes: string[] = [];
 
@@ -586,14 +733,35 @@ export class ExpensesService {
       expense.amount = fx.amountUsd;
     }
 
+    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Dashboard User';
+
     if (changes.length > 0) {
-      const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Dashboard User';
       expense.history.push({
         action: 'Request Details Modified',
         timestamp: now,
         user: userName,
         notes: `Modified: ${changes.join(', ')}`,
       });
+    }
+
+    if (wasChangesRequested) {
+      expense.status = 'PENDING_APPROVER';
+      // Keep changeRequestNotes for audit in tracker/report; history also retains them.
+      expense.history.push({
+        action: 'Resubmitted after Changes',
+        timestamp: now,
+        user: userName,
+        notes:
+          changes.length > 0
+            ? 'Requester updated the request and resubmitted for approval.'
+            : 'Requester resubmitted the request for approval.',
+      });
+      const saved = await expense.save();
+      await this.notifyApproversOfSubmission(saved);
+      return saved;
+    }
+
+    if (changes.length > 0) {
       return expense.save();
     }
 
@@ -603,7 +771,10 @@ export class ExpensesService {
   async delete(id: string, actingUser?: ActingUser): Promise<void> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    this.assertRequesterCanMutate(expense, actingUser, 'delete');
+
+    if (actingUser?.role === 'REQUESTER') {
+      throw new ForbiddenException('Requesters cannot delete expense requests.');
+    }
 
     const result = await this.expenseModel.deleteOne({ id }).exec();
     if (result.deletedCount === 0) throw new NotFoundException(`Expense with ID ${id} not found`);

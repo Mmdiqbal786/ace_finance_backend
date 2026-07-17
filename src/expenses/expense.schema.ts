@@ -121,6 +121,16 @@ export class Expense {
   @Prop()
   processorNotes?: string;
 
+  /** Latest staff instruction when changes were requested (shown in tracker/report). */
+  @Prop()
+  changeRequestNotes?: string;
+
+  @Prop()
+  changeRequestedAt?: string;
+
+  @Prop()
+  changeRequestedBy?: string;
+
   @Prop()
   approvedAt?: string;
 
