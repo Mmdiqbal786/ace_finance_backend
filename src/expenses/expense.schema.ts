@@ -32,6 +32,32 @@ export class HistoryLog {
 
 const HistoryLogSchema = SchemaFactory.createForClass(HistoryLog);
 
+@Schema({ _id: false })
+export class PaymentReceipt {
+  @Prop({ required: true })
+  fileName: string;
+
+  @Prop({ required: true })
+  originalName: string;
+
+  @Prop()
+  mimeType?: string;
+
+  @Prop()
+  size?: number;
+
+  @Prop({ required: true })
+  uploadedAt: string;
+
+  @Prop()
+  uploadedBy?: string;
+
+  @Prop()
+  paymentAmount?: number;
+}
+
+const PaymentReceiptSchema = SchemaFactory.createForClass(PaymentReceipt);
+
 @Schema({ collection: 'expenses' })
 export class Expense {
   @Prop({ required: true, unique: true })
@@ -108,6 +134,23 @@ export class Expense {
   /** Set when the 1-day-left processor reminder email was sent (YYYY-MM-DD of due date). */
   @Prop()
   processorDueSoonReminderSentOn?: string;
+
+  /** Stored filename under uploads/invoices/ */
+  @Prop()
+  invoiceFileName?: string;
+
+  @Prop()
+  invoiceOriginalName?: string;
+
+  @Prop()
+  invoiceMimeType?: string;
+
+  @Prop()
+  invoiceSize?: number;
+
+  /** Payment receipts attached by processor (full or partial payouts) */
+  @Prop({ type: [PaymentReceiptSchema], default: [] })
+  paymentReceipts?: PaymentReceipt[];
 
   @Prop({ type: [HistoryLogSchema], default: [] })
   history: HistoryLog[];
