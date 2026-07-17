@@ -1,9 +1,112 @@
 import { Injectable } from '@nestjs/common';
 
+type ApiRoute = { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; path: string };
+
+const API_ROUTE_GROUPS: Array<{ title: string; routes: ApiRoute[] }> = [
+  {
+    title: 'Auth',
+    routes: [
+      { method: 'POST', path: '/auth/login' },
+      { method: 'POST', path: '/auth/verify-2fa' },
+      { method: 'POST', path: '/auth/resend-otp' },
+      { method: 'GET', path: '/auth/totp/status' },
+      { method: 'POST', path: '/auth/totp/setup' },
+      { method: 'POST', path: '/auth/totp/enable' },
+      { method: 'POST', path: '/auth/totp/disable/send-code' },
+      { method: 'POST', path: '/auth/totp/disable' },
+      { method: 'POST', path: '/auth/change-password' },
+      { method: 'POST', path: '/auth/forgot-password' },
+      { method: 'POST', path: '/auth/reset-password' },
+      { method: 'GET', path: '/auth/validate-reset-token' },
+      { method: 'POST', path: '/auth/seed' },
+    ],
+  },
+  {
+    title: 'Users',
+    routes: [
+      { method: 'GET', path: '/users' },
+      { method: 'POST', path: '/users' },
+      { method: 'GET', path: '/users/me' },
+      { method: 'PUT', path: '/users/me' },
+      { method: 'PUT', path: '/users/:id' },
+      { method: 'DELETE', path: '/users/:id' },
+    ],
+  },
+  {
+    title: 'Expenses',
+    routes: [
+      { method: 'POST', path: '/expenses' },
+      { method: 'GET', path: '/expenses' },
+      { method: 'GET', path: '/expenses/stats' },
+      { method: 'GET', path: '/expenses/mine' },
+      { method: 'GET', path: '/expenses/:id' },
+      { method: 'GET', path: '/expenses/:id/invoice' },
+      { method: 'GET', path: '/expenses/:id/payment-receipt/:fileName' },
+      { method: 'PUT', path: '/expenses/:id' },
+      { method: 'PATCH', path: '/expenses/:id/approve' },
+      { method: 'PATCH', path: '/expenses/:id/reject' },
+      { method: 'PATCH', path: '/expenses/:id/request-changes' },
+      { method: 'PATCH', path: '/expenses/:id/process' },
+      { method: 'PATCH', path: '/expenses/:id/partial-pay' },
+      { method: 'PATCH', path: '/expenses/:id/processor-reject' },
+      { method: 'DELETE', path: '/expenses/:id' },
+    ],
+  },
+  {
+    title: 'Catalog',
+    routes: [
+      { method: 'GET', path: '/categories/active' },
+      { method: 'GET', path: '/categories' },
+      { method: 'POST', path: '/categories' },
+      { method: 'PUT', path: '/categories/:id' },
+      { method: 'DELETE', path: '/categories/:id' },
+      { method: 'GET', path: '/projects/active' },
+      { method: 'GET', path: '/projects' },
+      { method: 'POST', path: '/projects' },
+      { method: 'PUT', path: '/projects/:id' },
+      { method: 'DELETE', path: '/projects/:id' },
+      { method: 'GET', path: '/countries/active' },
+      { method: 'GET', path: '/countries' },
+      { method: 'POST', path: '/countries' },
+      { method: 'PUT', path: '/countries/:id' },
+      { method: 'DELETE', path: '/countries/:id' },
+    ],
+  },
+  {
+    title: 'FX',
+    routes: [{ method: 'GET', path: '/fx/convert' }],
+  },
+];
+
 @Injectable()
 export class AppService {
+  private methodClass(method: ApiRoute['method']): string {
+    return method.toLowerCase();
+  }
+
+  private renderRoutes(): string {
+    return API_ROUTE_GROUPS.map(
+      (group) => `
+      <section class="group">
+        <h2 class="group-title">${group.title}</h2>
+        <div class="grid">
+          ${group.routes
+            .map(
+              (route) => `
+            <div class="endpoint">
+              <span class="method ${this.methodClass(route.method)}">${route.method}</span>
+              <div class="path">${route.path}</div>
+            </div>`,
+            )
+            .join('')}
+        </div>
+      </section>`,
+    ).join('');
+  }
+
   getWelcomePage(): string {
     const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+    const routeCount = API_ROUTE_GROUPS.reduce((n, g) => n + g.routes.length, 0);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -25,13 +128,13 @@ export class AppService {
         radial-gradient(ellipse 70% 50% at 90% 10%, rgba(32, 60, 98, 0.1), transparent 50%),
         #e8edf4;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
       padding: 2rem 1rem;
     }
     .card {
       width: 100%;
-      max-width: 720px;
+      max-width: 960px;
       background: #ffffff;
       border: 1.5px solid #64748b;
       border-radius: 20px;
@@ -88,7 +191,7 @@ export class AppService {
       display: inline-flex;
       align-items: center;
       gap: 0.5rem;
-      margin: 1.1rem 0 1.5rem;
+      margin: 1.1rem 0 1.25rem;
       padding: 0.45rem 0.9rem;
       border-radius: 999px;
       background: #d1fae5;
@@ -109,34 +212,52 @@ export class AppService {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.55; transform: scale(0.85); }
     }
+    .meta {
+      margin: 0 0 1.25rem;
+      color: #475569;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+    .group { margin-bottom: 1.25rem; }
+    .group-title {
+      font-size: 0.8rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #475569;
+      margin-bottom: 0.55rem;
+    }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 0.75rem;
-      margin-bottom: 1.5rem;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.65rem;
     }
     .endpoint {
-      padding: 0.95rem 1rem;
+      padding: 0.8rem 0.9rem;
       border-radius: 12px;
       background: #f1f5f9;
       border: 1.5px solid #64748b;
     }
     .method {
       display: inline-block;
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       font-weight: 800;
       letter-spacing: 0.06em;
-      padding: 0.25rem 0.5rem;
+      padding: 0.2rem 0.45rem;
       border-radius: 6px;
-      margin-bottom: 0.45rem;
+      margin-bottom: 0.4rem;
     }
     .get { background: #dbeafe; color: #1850a8; border: 1px solid #93c5fd; }
     .post { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+    .put { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+    .patch { background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
+    .delete { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
     .path {
       font-family: "IBM Plex Mono", ui-monospace, monospace;
-      font-size: 0.9rem;
+      font-size: 0.8rem;
       font-weight: 700;
       color: #1850a8;
+      word-break: break-all;
     }
     .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
     .btn {
@@ -185,25 +306,9 @@ export class AppService {
     </div>
 
     <div class="status"><span class="dot"></span> API Online</div>
+    <p class="meta">${routeCount} routes across Auth, Users, Expenses, Catalog, and FX</p>
 
-    <div class="grid">
-      <div class="endpoint">
-        <span class="method post">POST</span>
-        <div class="path">/auth/login</div>
-      </div>
-      <div class="endpoint">
-        <span class="method get">GET</span>
-        <div class="path">/expenses</div>
-      </div>
-      <div class="endpoint">
-        <span class="method get">GET</span>
-        <div class="path">/expenses/stats</div>
-      </div>
-      <div class="endpoint">
-        <span class="method get">GET</span>
-        <div class="path">/users</div>
-      </div>
-    </div>
+    ${this.renderRoutes()}
 
     <div class="actions">
       <a class="btn btn-primary" href="${frontendUrl}/" target="_blank" rel="noreferrer">Open Frontend App</a>
