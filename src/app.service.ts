@@ -114,6 +114,8 @@ export class AppService {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Aceolution Finance API</title>
+  <link rel="icon" type="image/png" href="/Ace_logo_small.png" />
+  <link rel="apple-touch-icon" href="/Ace_logo_small.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
@@ -297,7 +299,7 @@ export class AppService {
   <main class="card">
     <div class="brand">
       <div class="logo">
-        <img src="${frontendUrl}/Ace_logo_small.png" alt="Aceolution" />
+        <img src="/Ace_logo_small.png" alt="Aceolution" />
       </div>
       <div>
         <h1>Aceolution <span class="accent">Finance</span> API</h1>

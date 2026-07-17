@@ -19,6 +19,8 @@ describe('AppController', () => {
       const html = appController.getHome();
       expect(html).toContain('Aceolution');
       expect(html).toContain('Finance API');
+      expect(html).toContain('/Ace_logo_small.png');
+      expect(html).toContain('rel="icon"');
       expect(html).toContain('/auth/login');
       expect(html).toContain('/auth/verify-2fa');
       expect(html).toContain('/expenses/:id/request-changes');
