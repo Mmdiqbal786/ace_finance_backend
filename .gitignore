@@ -42,6 +42,9 @@ lerna-debug.log*
 .env.production.local
 .env.local
 
+# Uploaded invoices
+/uploads
+
 # temp directory
 .temp
 .tmp

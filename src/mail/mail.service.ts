@@ -375,6 +375,84 @@ export class MailService {
     });
   }
 
+  /** Requester notified when staff requests changes (edit + resubmit). */
+  async sendExpenseChangesRequestedToRequester(
+    expense: ExpenseMailSummary,
+  ): Promise<{ sent: boolean; reason?: string }> {
+    const myRequestsUrl = `${this.frontendBase()}/dashboard/my-requests/`;
+    const subject = `Changes requested on expense — ${expense.id}`;
+    const text = [
+      `Hello ${expense.requesterName},`,
+      '',
+      'Changes have been requested on your expense. Please edit and resubmit it.',
+      '',
+      this.expenseDetailsText(expense),
+      '',
+      `Edit request: ${myRequestsUrl}`,
+      '',
+      '— Aceolution Finance',
+    ].join('\n');
+
+    const html = this.wrapHtml(
+      'Changes requested on your expense',
+      `
+        <p>Hello <strong>${this.escapeHtml(expense.requesterName)}</strong>,</p>
+        <p>Changes have been requested on your expense. Please <strong>edit and resubmit</strong> it from My Requests.</p>
+        ${this.expenseDetailsHtml(expense)}
+      `,
+      'Edit My Requests',
+      myRequestsUrl,
+    );
+
+    return this.sendMail({
+      to: expense.requesterEmail,
+      subject,
+      text,
+      html,
+      context: 'expense changes requested (requester)',
+    });
+  }
+
+  /** Approvers notified when a processor returns an approved expense for re-review. */
+  async sendExpenseReturnedToApprover(params: {
+    to: string;
+    approverName: string;
+    expense: ExpenseMailSummary;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const queueUrl = `${this.frontendBase()}/dashboard/approver/`;
+    const subject = `Expense returned for re-approval — ${params.expense.id}`;
+    const text = [
+      `Hello ${params.approverName},`,
+      '',
+      'An approved expense has been returned to the approver queue for re-review.',
+      '',
+      this.expenseDetailsText(params.expense),
+      '',
+      `Open approver queue: ${queueUrl}`,
+      '',
+      '— Aceolution Finance',
+    ].join('\n');
+
+    const html = this.wrapHtml(
+      'Expense returned for re-approval',
+      `
+        <p>Hello <strong>${this.escapeHtml(params.approverName)}</strong>,</p>
+        <p>An approved expense has been <strong>returned to the approver queue</strong> for re-review.</p>
+        ${this.expenseDetailsHtml(params.expense)}
+      `,
+      'Open Approver Queue',
+      queueUrl,
+    );
+
+    return this.sendMail({
+      to: params.to,
+      subject,
+      text,
+      html,
+      context: 'expense returned to approver',
+    });
+  }
+
   /** Processors notified when approver approves. */
   async sendExpenseApprovedToProcessor(params: {
     to: string;

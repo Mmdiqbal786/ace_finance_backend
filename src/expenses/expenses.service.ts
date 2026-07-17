@@ -8,6 +8,7 @@ import { CountriesService } from '../countries/countries.service';
 import { FxService } from '../fx/fx.service';
 import { MailService, ExpenseMailSummary } from '../mail/mail.service';
 import { UsersService } from '../users/users.service';
+import { StorageService } from '../storage/storage.service';
 
 export interface ActingUser {
   userId: string;
@@ -27,7 +28,18 @@ export interface CreateExpenseInput {
   description: string;
   date: string;
   dueDate: string;
+  /** Pre-generated id (so invoice filename can include it before save) */
+  id?: string;
 }
+
+export interface InvoiceUploadMeta {
+  fileName: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+}
+
+export type PaymentReceiptUploadMeta = InvoiceUploadMeta;
 
 @Injectable()
 export class ExpensesService {
@@ -41,7 +53,39 @@ export class ExpensesService {
     private readonly fxService: FxService,
     private readonly mailService: MailService,
     private readonly usersService: UsersService,
+    private readonly storageService: StorageService,
   ) {}
+
+  /** e.g. EXP-1784269812102-4653 */
+  generateExpenseId(): string {
+    return `EXP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  }
+
+  private async removeInvoiceFile(fileName?: string) {
+    await this.storageService.deleteAttachment('invoices', fileName);
+  }
+
+  private async removeReceiptFile(fileName?: string) {
+    await this.storageService.deleteAttachment('receipts', fileName);
+  }
+
+  private pushPaymentReceipt(
+    expense: ExpenseDocument,
+    receipt: PaymentReceiptUploadMeta,
+    actingUser: ActingUser | undefined,
+    paymentAmount?: number,
+  ) {
+    if (!expense.paymentReceipts) expense.paymentReceipts = [];
+    expense.paymentReceipts.push({
+      fileName: receipt.fileName,
+      originalName: receipt.originalName,
+      mimeType: receipt.mimeType,
+      size: receipt.size,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor',
+      paymentAmount,
+    });
+  }
 
   private toMailSummary(
     expense: Expense | ExpenseDocument,
@@ -119,7 +163,14 @@ export class ExpensesService {
     }
   }
 
-  async create(expenseData: CreateExpenseInput): Promise<Expense> {
+  async create(
+    expenseData: CreateExpenseInput,
+    invoice?: InvoiceUploadMeta,
+  ): Promise<Expense> {
+    if (!invoice?.fileName) {
+      throw new BadRequestException('Invoice attachment is required.');
+    }
+
     const category = await this.categoriesService.assertActiveName(expenseData.category);
     const project = await this.projectsService.assertActiveName(expenseData.project);
     const country = await this.countriesService.assertActiveCountry(expenseData.country);
@@ -137,7 +188,7 @@ export class ExpensesService {
     );
 
     const now = new Date().toISOString();
-    const id = `EXP-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const id = expenseData.id || this.generateExpenseId();
 
     const newExpense = new this.expenseModel({
       requesterName: expenseData.requesterName,
@@ -157,19 +208,28 @@ export class ExpensesService {
       id,
       status: 'PENDING_APPROVER',
       submittedAt: now,
+      invoiceFileName: invoice.fileName,
+      invoiceOriginalName: invoice.originalName,
+      invoiceMimeType: invoice.mimeType,
+      invoiceSize: invoice.size,
       history: [
         {
           action: 'Submitted Request',
           timestamp: now,
           user: 'Public Requester',
-          notes: `Expense of ${fx.originalAmount} ${fx.currency} (≈ $${fx.amountUsd} USD @ ${fx.exchangeRate}) submitted by ${expenseData.requesterName}.`,
+          notes: `Expense of ${fx.originalAmount} ${fx.currency} (≈ $${fx.amountUsd} USD @ ${fx.exchangeRate}) submitted by ${expenseData.requesterName}. Invoice: ${invoice.originalName}.`,
         },
       ],
     });
 
-    const saved = await newExpense.save();
-    await this.notifyApproversOfSubmission(saved);
-    return saved;
+    try {
+      const saved = await newExpense.save();
+      await this.notifyApproversOfSubmission(saved);
+      return saved;
+    } catch (err) {
+      await this.removeInvoiceFile(invoice.fileName);
+      throw err;
+    }
   }
 
   async findAll(): Promise<Expense[]> {
@@ -241,6 +301,114 @@ export class ExpensesService {
     return saved;
   }
 
+  /**
+   * Approver: PENDING_APPROVER → CHANGES_REQUESTED (back to requester only).
+   * Processor: APPROVED_APPROVER → PENDING_APPROVER (approver) or CHANGES_REQUESTED (requester).
+   */
+  async requestChanges(
+    id: string,
+    notes: string,
+    target: 'requester' | 'approver',
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
+    const trimmedNotes = String(notes || '').trim();
+    if (!trimmedNotes) {
+      throw new BadRequestException('Notes are required when requesting changes.');
+    }
+    if (target !== 'requester' && target !== 'approver') {
+      throw new BadRequestException('Target must be "requester" or "approver".');
+    }
+
+    const expense = await this.expenseModel.findOne({ id }).exec();
+    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+
+    const role = actingUser?.role || '';
+    const isApproverRole = role === 'APPROVER' || role === 'ADMIN';
+    const isProcessorRole = role === 'PROCESSOR' || role === 'ADMIN';
+
+    if (expense.status === 'PENDING_APPROVER') {
+      if (!isApproverRole) {
+        throw new ForbiddenException('Only approvers can request changes on pending requests.');
+      }
+      if (target !== 'requester') {
+        throw new BadRequestException('Approvers can only send requests back to the requester.');
+      }
+    } else if (expense.status === 'APPROVED_APPROVER') {
+      if (!isProcessorRole) {
+        throw new ForbiddenException('Only processors can request changes on approved requests.');
+      }
+      if (Number(expense.paidAmount || 0) > 0) {
+        throw new BadRequestException(
+          'Cannot request changes after a partial payment has been recorded.',
+        );
+      }
+    } else {
+      throw new BadRequestException(
+        `Cannot request changes. Current status is ${expense.status}`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Staff';
+
+    if (target === 'approver') {
+      expense.status = 'PENDING_APPROVER';
+      expense.approverNotes = undefined;
+      expense.approvedAt = undefined;
+      expense.processorNotes = undefined;
+      expense.changeRequestNotes = trimmedNotes;
+      expense.changeRequestedAt = now;
+      expense.changeRequestedBy = userName;
+      expense.history.push({
+        action: 'Returned to Approver',
+        timestamp: now,
+        user: userName,
+        notes: trimmedNotes,
+      });
+      const saved = await expense.save();
+      await this.notifyApproversOfReturn(saved, trimmedNotes);
+      return saved;
+    }
+
+    expense.status = 'CHANGES_REQUESTED';
+    expense.changeRequestNotes = trimmedNotes;
+    expense.changeRequestedAt = now;
+    expense.changeRequestedBy = userName;
+    expense.history.push({
+      action: 'Requested Changes',
+      timestamp: now,
+      user: userName,
+      notes: trimmedNotes,
+    });
+    const saved = await expense.save();
+    this.notify(
+      `changes-requested ${saved.id}`,
+      this.mailService.sendExpenseChangesRequestedToRequester(
+        this.toMailSummary(saved, trimmedNotes),
+      ),
+    );
+    return saved;
+  }
+
+  private async notifyApproversOfReturn(expense: Expense | ExpenseDocument, notes: string) {
+    const summary = this.toMailSummary(expense, notes);
+    const approvers = await this.usersService.findActiveByRole('APPROVER');
+    if (approvers.length === 0) {
+      this.logger.warn(`No active APPROVER users to notify for returned expense ${expense.id}`);
+      return;
+    }
+    for (const approver of approvers) {
+      this.notify(
+        `returned→approver ${approver.email} ${expense.id}`,
+        this.mailService.sendExpenseReturnedToApprover({
+          to: approver.email,
+          approverName: approver.name,
+          expense: summary,
+        }),
+      );
+    }
+  }
+
   private assertPayableStatus(status: string, action: string) {
     if (status !== 'APPROVED_APPROVER' && status !== 'PARTIALLY_PAID') {
       throw new BadRequestException(`Cannot ${action} expense. Current status is ${status}`);
@@ -256,24 +424,53 @@ export class ExpensesService {
     return this.roundMoney(Math.max(0, Number(expense.amount) - paid));
   }
 
-  async process(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
+  /** Remaining USD still owed — used when naming full-pay receipts. */
+  async getRemainingUsd(id: string): Promise<number> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    this.assertPayableStatus(expense.status, 'process');
+    const remaining = this.remainingAmount(expense);
+    return remaining > 0 ? remaining : this.roundMoney(Number(expense.amount));
+  }
+
+  async process(
+    id: string,
+    notes?: string,
+    actingUser?: ActingUser,
+    receipt?: PaymentReceiptUploadMeta,
+  ): Promise<Expense> {
+    if (!receipt?.fileName) {
+      throw new BadRequestException('Payment receipt attachment is required.');
+    }
+
+    const expense = await this.expenseModel.findOne({ id }).exec();
+    if (!expense) {
+      await this.removeReceiptFile(receipt.fileName);
+      throw new NotFoundException(`Expense with ID ${id} not found`);
+    }
+    try {
+      this.assertPayableStatus(expense.status, 'process');
+    } catch (err) {
+      await this.removeReceiptFile(receipt.fileName);
+      throw err;
+    }
 
     const now = new Date().toISOString();
     const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
     const remaining = this.remainingAmount(expense);
+    const payAmount = remaining > 0 ? remaining : this.roundMoney(Number(expense.amount));
     expense.paidAmount = this.roundMoney(Number(expense.amount));
     expense.status = 'PROCESSED';
     expense.processorNotes = notes;
     expense.processedAt = now;
+    this.pushPaymentReceipt(expense, receipt, actingUser, payAmount);
     expense.history.push({
       action: 'Processed & Paid',
       timestamp: now,
       user: userName,
-      notes: notes || (remaining > 0 ? 'Marked as fully paid.' : 'Marked as processed.'),
-      paymentAmount: remaining > 0 ? remaining : this.roundMoney(Number(expense.amount)),
+      notes:
+        (notes || (remaining > 0 ? 'Marked as fully paid.' : 'Marked as processed.')) +
+        ` Receipt: ${receipt.originalName}.`,
+      paymentAmount: payAmount,
       totalPaid: this.roundMoney(Number(expense.amount)),
       remaining: 0,
     });
@@ -290,66 +487,81 @@ export class ExpensesService {
     paymentAmount: number,
     notes?: string,
     actingUser?: ActingUser,
+    receipt?: PaymentReceiptUploadMeta,
   ): Promise<Expense> {
+    if (!receipt?.fileName) {
+      throw new BadRequestException('Payment receipt attachment is required.');
+    }
+
     const expense = await this.expenseModel.findOne({ id }).exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    this.assertPayableStatus(expense.status, 'partially pay');
-
-    const amount = this.roundMoney(Number(paymentAmount));
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new BadRequestException('Payment amount must be greater than $0.00');
+    if (!expense) {
+      await this.removeReceiptFile(receipt.fileName);
+      throw new NotFoundException(`Expense with ID ${id} not found`);
     }
 
-    const remaining = this.remainingAmount(expense);
-    if (amount > remaining) {
-      throw new BadRequestException(
-        `Payment amount cannot exceed remaining balance of $${remaining.toFixed(2)}`,
-      );
-    }
+    try {
+      this.assertPayableStatus(expense.status, 'partially pay');
 
-    const now = new Date().toISOString();
-    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
-    const newPaid = this.roundMoney(Number(expense.paidAmount || 0) + amount);
-    expense.paidAmount = newPaid;
-    expense.processorNotes = notes ?? expense.processorNotes;
+      const amount = this.roundMoney(Number(paymentAmount));
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new BadRequestException('Payment amount must be greater than $0.00');
+      }
 
-    const newRemaining = this.roundMoney(Number(expense.amount) - newPaid);
-    let becameFullyPaid = false;
-    if (newRemaining <= 0) {
-      expense.paidAmount = this.roundMoney(Number(expense.amount));
-      expense.status = 'PROCESSED';
-      expense.processedAt = now;
-      becameFullyPaid = true;
-      expense.history.push({
-        action: 'Processed & Paid',
-        timestamp: now,
-        user: userName,
-        notes: notes || 'Final payment — request fully paid.',
-        paymentAmount: amount,
-        totalPaid: this.roundMoney(Number(expense.amount)),
-        remaining: 0,
-      });
-    } else {
-      expense.status = 'PARTIALLY_PAID';
-      expense.history.push({
-        action: 'Partially Paid',
-        timestamp: now,
-        user: userName,
-        notes: notes || undefined,
-        paymentAmount: amount,
-        totalPaid: newPaid,
-        remaining: newRemaining,
-      });
-    }
+      const remaining = this.remainingAmount(expense);
+      if (amount > remaining) {
+        throw new BadRequestException(
+          `Payment amount cannot exceed remaining balance of $${remaining.toFixed(2)}`,
+        );
+      }
 
-    const saved = await expense.save();
-    if (becameFullyPaid) {
-      this.notify(
-        `fully-paid (partial final) ${saved.id}`,
-        this.mailService.sendExpenseFullyPaidToRequester(this.toMailSummary(saved, notes)),
-      );
+      const now = new Date().toISOString();
+      const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
+      const newPaid = this.roundMoney(Number(expense.paidAmount || 0) + amount);
+      expense.paidAmount = newPaid;
+      expense.processorNotes = notes ?? expense.processorNotes;
+      this.pushPaymentReceipt(expense, receipt, actingUser, amount);
+
+      const newRemaining = this.roundMoney(Number(expense.amount) - newPaid);
+      let becameFullyPaid = false;
+      if (newRemaining <= 0) {
+        expense.paidAmount = this.roundMoney(Number(expense.amount));
+        expense.status = 'PROCESSED';
+        expense.processedAt = now;
+        becameFullyPaid = true;
+        expense.history.push({
+          action: 'Processed & Paid',
+          timestamp: now,
+          user: userName,
+          notes: (notes || 'Final payment — request fully paid.') + ` Receipt: ${receipt.originalName}.`,
+          paymentAmount: amount,
+          totalPaid: this.roundMoney(Number(expense.amount)),
+          remaining: 0,
+        });
+      } else {
+        expense.status = 'PARTIALLY_PAID';
+        expense.history.push({
+          action: 'Partially Paid',
+          timestamp: now,
+          user: userName,
+          notes: (notes ? `${notes} ` : '') + `Receipt: ${receipt.originalName}.`,
+          paymentAmount: amount,
+          totalPaid: newPaid,
+          remaining: newRemaining,
+        });
+      }
+
+      const saved = await expense.save();
+      if (becameFullyPaid) {
+        this.notify(
+          `fully-paid (partial final) ${saved.id}`,
+          this.mailService.sendExpenseFullyPaidToRequester(this.toMailSummary(saved, notes)),
+        );
+      }
+      return saved;
+    } catch (err) {
+      await this.removeReceiptFile(receipt.fileName);
+      throw err;
     }
-    return saved;
   }
 
   async processorReject(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
@@ -376,20 +588,58 @@ export class ExpensesService {
     return saved;
   }
 
-  private assertRequesterCanMutate(
+  private assertCanMutateExpenseDetails(
     expense: ExpenseDocument,
     actingUser: ActingUser | undefined,
     action: string,
   ) {
-    if (!actingUser || actingUser.role !== 'REQUESTER') return;
-    if (expense.requesterEmail.toLowerCase() !== actingUser.email.toLowerCase()) {
-      throw new ForbiddenException(`You can only ${action} your own expense requests`);
+    if (!actingUser) {
+      throw new ForbiddenException(`You must be signed in to ${action} this expense`);
     }
-    if (expense.status !== 'PENDING_APPROVER') {
-      throw new BadRequestException(
-        `You can only ${action} requests that are still awaiting manager approval`,
+
+    // Approver / Processor send requests back via Request Changes — they do not edit the form
+    if (actingUser.role === 'APPROVER' || actingUser.role === 'PROCESSOR') {
+      throw new ForbiddenException(
+        `Approvers and processors cannot ${action} expense details. Use Request Changes instead.`,
       );
     }
+
+    if (actingUser.role === 'REQUESTER') {
+      if (expense.requesterEmail.toLowerCase() !== actingUser.email.toLowerCase()) {
+        throw new ForbiddenException(`You can only ${action} your own expense requests`);
+      }
+      if (action === 'edit') {
+        // Edit only after Approver/Processor Request Changes
+        if (expense.status !== 'CHANGES_REQUESTED') {
+          throw new BadRequestException(
+            'You can only edit a request after staff has requested changes.',
+          );
+        }
+        return;
+      }
+      throw new ForbiddenException(`Requesters cannot ${action} expense requests.`);
+    }
+
+    // ADMIN may correct details only when requester would be allowed to edit
+    if (actingUser.role === 'ADMIN') {
+      if (action === 'edit' && expense.status !== 'CHANGES_REQUESTED') {
+        throw new BadRequestException(
+          'Expense details can only be edited when status is Changes Requested.',
+        );
+      }
+      if (
+        action === 'delete' &&
+        expense.status !== 'PENDING_APPROVER' &&
+        expense.status !== 'CHANGES_REQUESTED'
+      ) {
+        throw new BadRequestException(
+          `Cannot ${action} this expense after it has been approved, paid, or rejected`,
+        );
+      }
+      return;
+    }
+
+    throw new ForbiddenException(`You are not allowed to ${action} this expense`);
   }
 
   async update(
@@ -409,8 +659,9 @@ export class ExpensesService {
   ): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    this.assertRequesterCanMutate(expense, actingUser, 'edit');
+    this.assertCanMutateExpenseDetails(expense, actingUser, 'edit');
 
+    const wasChangesRequested = expense.status === 'CHANGES_REQUESTED';
     const now = new Date().toISOString();
     const changes: string[] = [];
 
@@ -482,14 +733,35 @@ export class ExpensesService {
       expense.amount = fx.amountUsd;
     }
 
+    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Dashboard User';
+
     if (changes.length > 0) {
-      const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Dashboard User';
       expense.history.push({
         action: 'Request Details Modified',
         timestamp: now,
         user: userName,
         notes: `Modified: ${changes.join(', ')}`,
       });
+    }
+
+    if (wasChangesRequested) {
+      expense.status = 'PENDING_APPROVER';
+      // Keep changeRequestNotes for audit in tracker/report; history also retains them.
+      expense.history.push({
+        action: 'Resubmitted after Changes',
+        timestamp: now,
+        user: userName,
+        notes:
+          changes.length > 0
+            ? 'Requester updated the request and resubmitted for approval.'
+            : 'Requester resubmitted the request for approval.',
+      });
+      const saved = await expense.save();
+      await this.notifyApproversOfSubmission(saved);
+      return saved;
+    }
+
+    if (changes.length > 0) {
       return expense.save();
     }
 
@@ -499,10 +771,68 @@ export class ExpensesService {
   async delete(id: string, actingUser?: ActingUser): Promise<void> {
     const expense = await this.expenseModel.findOne({ id }).exec();
     if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
-    this.assertRequesterCanMutate(expense, actingUser, 'delete');
+
+    if (actingUser?.role === 'REQUESTER') {
+      throw new ForbiddenException('Requesters cannot delete expense requests.');
+    }
 
     const result = await this.expenseModel.deleteOne({ id }).exec();
     if (result.deletedCount === 0) throw new NotFoundException(`Expense with ID ${id} not found`);
+    await this.removeInvoiceFile(expense.invoiceFileName);
+    for (const receipt of expense.paymentReceipts || []) {
+      await this.removeReceiptFile(receipt.fileName);
+    }
+  }
+
+  async getInvoiceFile(id: string): Promise<{
+    buffer: Buffer;
+    originalName: string;
+    mimeType: string;
+  }> {
+    const expense = await this.expenseModel.findOne({ id }).lean().exec();
+    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense.invoiceFileName) {
+      throw new NotFoundException('No invoice attached to this expense.');
+    }
+
+    try {
+      const file = await this.storageService.readAttachment('invoices', expense.invoiceFileName);
+      return {
+        buffer: file.buffer,
+        originalName: expense.invoiceOriginalName || expense.invoiceFileName,
+        mimeType: expense.invoiceMimeType || 'application/octet-stream',
+      };
+    } catch {
+      throw new NotFoundException('Invoice file is missing in storage.');
+    }
+  }
+
+  async getPaymentReceiptFile(
+    id: string,
+    fileName: string,
+  ): Promise<{
+    buffer: Buffer;
+    originalName: string;
+    mimeType: string;
+  }> {
+    const expense = await this.expenseModel.findOne({ id }).lean().exec();
+    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+
+    const receipt = (expense.paymentReceipts || []).find((r) => r.fileName === fileName);
+    if (!receipt) {
+      throw new NotFoundException('Payment receipt not found on this expense.');
+    }
+
+    try {
+      const file = await this.storageService.readAttachment('receipts', receipt.fileName);
+      return {
+        buffer: file.buffer,
+        originalName: receipt.originalName || receipt.fileName,
+        mimeType: receipt.mimeType || 'application/octet-stream',
+      };
+    } catch {
+      throw new NotFoundException('Payment receipt file is missing in storage.');
+    }
   }
 
   async getStats(): Promise<any> {

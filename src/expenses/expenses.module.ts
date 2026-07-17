@@ -10,6 +10,7 @@ import { CountriesModule } from '../countries/countries.module';
 import { FxModule } from '../fx/fx.module';
 import { MailModule } from '../mail/mail.module';
 import { UsersModule } from '../users/users.module';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UsersModule } from '../users/users.module';
     FxModule,
     MailModule,
     UsersModule,
+    StorageModule,
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService, ExpensesScheduler],
