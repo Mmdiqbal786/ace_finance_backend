@@ -355,6 +355,17 @@ export class AppService {
       font-weight: 500;
       animation: fadeUp 0.55s ease 0.8s both;
     }
+    @media (max-width: 720px) {
+      body { padding: 1rem 0.75rem; }
+      .card { padding: 1.25rem 1rem; border-radius: 16px; }
+      .brand { align-items: flex-start; gap: 0.7rem; }
+      h1 { font-size: 1.25rem; }
+      .subtitle { font-size: 0.88rem; }
+      .grid { grid-template-columns: 1fr; }
+      .actions { flex-direction: column; align-items: stretch; }
+      .btn { width: 100%; min-height: 44px; justify-content: center; }
+      .path { font-size: 0.74rem; }
+    }
   </style>
 </head>
 <body>

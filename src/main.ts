@@ -7,10 +7,16 @@ import { join } from 'path';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { ApiExceptionFilter } from './common/api-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-  app.useStaticAssets(join(__dirname, '..', 'public'));
+  app.useGlobalFilters(new ApiExceptionFilter());
+  // Serve logo/assets only — do not treat "/" as a missing index.html (that caused 404)
+  app.useStaticAssets(join(__dirname, '..', 'public'), {
+    index: false,
+    fallthrough: true,
+  });
   app.enableCors();
   const port = process.env.PORT ?? 3001;
   await app.listen(port, '0.0.0.0');
