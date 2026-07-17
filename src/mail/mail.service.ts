@@ -125,7 +125,7 @@ export class MailService {
       const user = this.config.get<string>('SMTP_USER')?.trim();
       const pass = this.config.get<string>('SMTP_PASS')?.replace(/\s+/g, '');
 
-      const transporter = nodemailer.createTransport({
+      const transportOptions: nodemailer.TransportOptions = {
         host,
         port,
         secure: port === 465,
@@ -139,7 +139,9 @@ export class MailService {
         tls: {
           minVersion: 'TLSv1.2',
         },
-      });
+      } as nodemailer.TransportOptions;
+
+      const transporter = nodemailer.createTransport(transportOptions);
 
       const from =
         this.config.get<string>('SMTP_FROM')?.trim() ||
