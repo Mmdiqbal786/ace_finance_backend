@@ -130,12 +130,13 @@ export class MailService {
         port,
         secure: port === 465,
         requireTLS: port === 587,
+        // Render free tier often cannot reach Gmail over IPv6 (ENETUNREACH)
+        family: 4,
         auth: user && pass ? { user, pass } : undefined,
         connectionTimeout: 15_000,
         greetingTimeout: 15_000,
         socketTimeout: 20_000,
         tls: {
-          // Gmail on Render sometimes fails if SNI/certs are picky
           minVersion: 'TLSv1.2',
         },
       });
