@@ -99,7 +99,7 @@ export class AuthService {
       });
       if (!mailResult.sent) {
         throw new BadRequestException(
-          'We could not send the verification email. Check SMTP settings or contact your administrator.',
+          `We could not send the verification email (${mailResult.reason || 'SMTP error'}). Check SMTP settings or contact your administrator.`,
         );
       }
     }
