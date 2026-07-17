@@ -35,6 +35,24 @@ export class User {
 
   @Prop()
   passwordResetExpires?: Date;
+
+  /** SHA-256 hash of the current email login OTP */
+  @Prop()
+  loginOtpHash?: string;
+
+  @Prop()
+  loginOtpExpires?: Date;
+
+  /** Authenticator app secret (ADMIN optional 2FA) */
+  @Prop()
+  totpSecret?: string;
+
+  @Prop({ default: false })
+  totpEnabled?: boolean;
+
+  /** Pending secret while admin completes QR setup */
+  @Prop()
+  totpPendingSecret?: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

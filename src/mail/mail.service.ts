@@ -259,6 +259,76 @@ export class MailService {
     });
   }
 
+  async sendLoginOtpEmail(params: {
+    to: string;
+    name: string;
+    code: string;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const subject = 'Your Aceolution Finance sign-in code';
+    const text = [
+      `Hello ${params.name},`,
+      '',
+      `Your verification code is: ${params.code}`,
+      '',
+      'This code expires in 10 minutes. If you did not try to sign in, you can ignore this email.',
+      '',
+      '— Aceolution Finance',
+    ].join('\n');
+
+    const html = this.wrapHtml(
+      'Your sign-in code',
+      `
+        <p>Hello <strong>${this.escapeHtml(params.name)}</strong>,</p>
+        <p>Use this code to finish signing in to Aceolution Finance:</p>
+        <p style="font-size:28px;letter-spacing:6px;font-weight:700;color:#203c62;margin:20px 0">${this.escapeHtml(params.code)}</p>
+        <p style="font-size:13px;color:#64748b">This code expires in 10 minutes. If you did not try to sign in, you can ignore this email.</p>
+      `,
+    );
+
+    return this.sendMail({
+      to: params.to,
+      subject,
+      text,
+      html,
+      context: 'login otp',
+    });
+  }
+
+  async sendTotpDisableOtpEmail(params: {
+    to: string;
+    name: string;
+    code: string;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const subject = 'Disable authenticator — Aceolution Finance';
+    const text = [
+      `Hello ${params.name},`,
+      '',
+      `Your code to disable the authenticator app is: ${params.code}`,
+      '',
+      'This code expires in 10 minutes. If you did not request this, keep your authenticator enabled and contact your administrator.',
+      '',
+      '— Aceolution Finance',
+    ].join('\n');
+
+    const html = this.wrapHtml(
+      'Disable authenticator app',
+      `
+        <p>Hello <strong>${this.escapeHtml(params.name)}</strong>,</p>
+        <p>Use this code to disable your authenticator app (for example after reinstalling the app):</p>
+        <p style="font-size:28px;letter-spacing:6px;font-weight:700;color:#203c62;margin:20px 0">${this.escapeHtml(params.code)}</p>
+        <p style="font-size:13px;color:#64748b">This code expires in 10 minutes. If you did not request this, ignore this email.</p>
+      `,
+    );
+
+    return this.sendMail({
+      to: params.to,
+      subject,
+      text,
+      html,
+      context: 'totp disable otp',
+    });
+  }
+
   /** Confirmation to the requester after a new expense is submitted. */
   async sendExpenseSubmittedToRequester(
     expense: ExpenseMailSummary,
