@@ -918,27 +918,33 @@ export class ExpensesService {
   }
 
   /**
-   * Daily job: email all active approvers for PENDING_APPROVER requests
-   * whose due date is tomorrow (1 day left). Sends once per expense.
+   * Email all active approvers for requests due in 3 or 1 days.
+   * Each reminder type is sent once per expense.
    */
-  async sendApproverDueSoonReminders(): Promise<{ checked: number; reminded: number }> {
-    const tomorrow = new Date();
-    tomorrow.setHours(0, 0, 0, 0);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = this.localDateOnly(tomorrow);
+  async sendApproverDueSoonReminders(
+    daysLeft: 1 | 3 = 1,
+  ): Promise<{ checked: number; reminded: number }> {
+    const dueDate = new Date();
+    dueDate.setHours(0, 0, 0, 0);
+    dueDate.setDate(dueDate.getDate() + daysLeft);
+    const dueDateStr = this.localDateOnly(dueDate);
+    const reminderField =
+      daysLeft === 3
+        ? 'approverThreeDayReminderSentOn'
+        : 'approverDueSoonReminderSentOn';
 
     const pending = await this.expenseModel
       .find({
         status: 'PENDING_APPROVER',
         $or: [
-          { dueDate: tomorrowStr },
-          { dueDate: { $regex: `^${tomorrowStr}` } },
+          { dueDate: dueDateStr },
+          { dueDate: { $regex: `^${dueDateStr}` } },
         ],
       })
       .exec();
 
     const candidates = pending.filter(
-      (e) => e.approverDueSoonReminderSentOn !== tomorrowStr,
+      (e) => e[reminderField] !== dueDateStr,
     );
 
     if (candidates.length === 0) {
@@ -961,42 +967,49 @@ export class ExpensesService {
             to: approver.email,
             approverName: approver.name,
             expense: summary,
+            daysLeft,
           }),
         );
       }
-      expense.approverDueSoonReminderSentOn = tomorrowStr;
+      expense[reminderField] = dueDateStr;
       await expense.save();
       reminded++;
     }
 
     this.logger.log(
-      `Approver due-soon reminders: ${reminded} expense(s) for due date ${tomorrowStr}`,
+      `Approver ${daysLeft}-day reminders: ${reminded} expense(s) for due date ${dueDateStr}`,
     );
     return { checked: candidates.length, reminded };
   }
 
   /**
-   * Daily job: email processors for approved / partially paid requests
-   * whose due date is tomorrow (1 day left). Only after approver approval.
+   * Email processors for approved / partially paid requests due in 3 or 1
+   * days. Each reminder type is sent once per expense.
    */
-  async sendProcessorDueSoonReminders(): Promise<{ checked: number; reminded: number }> {
-    const tomorrow = new Date();
-    tomorrow.setHours(0, 0, 0, 0);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = this.localDateOnly(tomorrow);
+  async sendProcessorDueSoonReminders(
+    daysLeft: 1 | 3 = 1,
+  ): Promise<{ checked: number; reminded: number }> {
+    const dueDate = new Date();
+    dueDate.setHours(0, 0, 0, 0);
+    dueDate.setDate(dueDate.getDate() + daysLeft);
+    const dueDateStr = this.localDateOnly(dueDate);
+    const reminderField =
+      daysLeft === 3
+        ? 'processorThreeDayReminderSentOn'
+        : 'processorDueSoonReminderSentOn';
 
     const pendingPay = await this.expenseModel
       .find({
         status: { $in: ['APPROVED_APPROVER', 'PARTIALLY_PAID'] },
         $or: [
-          { dueDate: tomorrowStr },
-          { dueDate: { $regex: `^${tomorrowStr}` } },
+          { dueDate: dueDateStr },
+          { dueDate: { $regex: `^${dueDateStr}` } },
         ],
       })
       .exec();
 
     const candidates = pendingPay.filter(
-      (e) => e.processorDueSoonReminderSentOn !== tomorrowStr,
+      (e) => e[reminderField] !== dueDateStr,
     );
 
     if (candidates.length === 0) {
@@ -1019,16 +1032,17 @@ export class ExpensesService {
             to: processor.email,
             processorName: processor.name,
             expense: summary,
+            daysLeft,
           }),
         );
       }
-      expense.processorDueSoonReminderSentOn = tomorrowStr;
+      expense[reminderField] = dueDateStr;
       await expense.save();
       reminded++;
     }
 
     this.logger.log(
-      `Processor due-soon reminders: ${reminded} expense(s) for due date ${tomorrowStr}`,
+      `Processor ${daysLeft}-day reminders: ${reminded} expense(s) for due date ${dueDateStr}`,
     );
     return { checked: candidates.length, reminded };
   }

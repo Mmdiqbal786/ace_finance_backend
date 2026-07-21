@@ -12,22 +12,30 @@ export class ExpensesScheduler {
   @Cron(CronExpression.EVERY_DAY_AT_8AM)
   async handleDueSoonReminders() {
     this.logger.log('Running daily due-soon reminder jobs...');
-    try {
-      const approver = await this.expensesService.sendApproverDueSoonReminders();
-      this.logger.log(
-        `Approver due-soon: checked=${approver.checked} reminded=${approver.reminded}`,
-      );
-    } catch (err: any) {
-      this.logger.error(`Approver due-soon reminder job failed: ${err?.message || err}`);
-    }
+    for (const daysLeft of [3, 1] as const) {
+      try {
+        const approver =
+          await this.expensesService.sendApproverDueSoonReminders(daysLeft);
+        this.logger.log(
+          `Approver ${daysLeft}-day reminder: checked=${approver.checked} reminded=${approver.reminded}`,
+        );
+      } catch (err: any) {
+        this.logger.error(
+          `Approver ${daysLeft}-day reminder job failed: ${err?.message || err}`,
+        );
+      }
 
-    try {
-      const processor = await this.expensesService.sendProcessorDueSoonReminders();
-      this.logger.log(
-        `Processor due-soon: checked=${processor.checked} reminded=${processor.reminded}`,
-      );
-    } catch (err: any) {
-      this.logger.error(`Processor due-soon reminder job failed: ${err?.message || err}`);
+      try {
+        const processor =
+          await this.expensesService.sendProcessorDueSoonReminders(daysLeft);
+        this.logger.log(
+          `Processor ${daysLeft}-day reminder: checked=${processor.checked} reminded=${processor.reminded}`,
+        );
+      } catch (err: any) {
+        this.logger.error(
+          `Processor ${daysLeft}-day reminder job failed: ${err?.message || err}`,
+        );
+      }
     }
   }
 }
