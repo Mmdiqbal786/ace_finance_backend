@@ -28,6 +28,8 @@ export interface CreateExpenseInput {
   description: string;
   date: string;
   dueDate: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
   /** Pre-generated id (so invoice filename can include it before save) */
   id?: string;
 }
@@ -103,6 +105,8 @@ export class ExpensesService {
       originalAmount: Number(expense.originalAmount),
       amountUsd: Number(expense.amount),
       dueDate: expense.dueDate,
+      invoiceNumber: expense.invoiceNumber,
+      invoiceDate: expense.invoiceDate,
       notes: notes || undefined,
     };
   }
@@ -196,6 +200,8 @@ export class ExpensesService {
       description: expenseData.description,
       date: expenseData.date,
       dueDate: expenseData.dueDate,
+      invoiceNumber: expenseData.invoiceNumber,
+      invoiceDate: expenseData.invoiceDate,
       category,
       project,
       country: country.name,
@@ -654,6 +660,8 @@ export class ExpensesService {
       description?: string;
       date?: string;
       dueDate?: string;
+      invoiceNumber?: string;
+      invoiceDate?: string;
     },
     actingUser?: ActingUser,
   ): Promise<Expense> {
@@ -698,6 +706,26 @@ export class ExpensesService {
     if (updateData.dueDate && updateData.dueDate !== expense.dueDate) {
       changes.push(`Due date: "${expense.dueDate || '—'}" ➔ "${updateData.dueDate}"`);
       expense.dueDate = updateData.dueDate;
+    }
+    if (updateData.invoiceNumber !== undefined) {
+      const nextInvoiceNumber = updateData.invoiceNumber.trim();
+      const prevInvoiceNumber = expense.invoiceNumber || '';
+      if (nextInvoiceNumber !== prevInvoiceNumber) {
+        changes.push(
+          `Invoice number: "${prevInvoiceNumber || '—'}" ➔ "${nextInvoiceNumber || '—'}"`,
+        );
+        expense.invoiceNumber = nextInvoiceNumber || undefined;
+      }
+    }
+    if (updateData.invoiceDate !== undefined) {
+      const nextInvoiceDate = updateData.invoiceDate.trim();
+      const prevInvoiceDate = expense.invoiceDate || '';
+      if (nextInvoiceDate !== prevInvoiceDate) {
+        changes.push(
+          `Invoice date: "${prevInvoiceDate || '—'}" ➔ "${nextInvoiceDate || '—'}"`,
+        );
+        expense.invoiceDate = nextInvoiceDate || undefined;
+      }
     }
 
     const effectiveDate = expense.date;

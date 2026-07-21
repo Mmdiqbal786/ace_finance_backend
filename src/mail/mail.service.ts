@@ -16,6 +16,8 @@ export type ExpenseMailSummary = {
   originalAmount: number;
   amountUsd: number;
   dueDate?: string;
+  invoiceNumber?: string;
+  invoiceDate?: string;
   notes?: string;
 };
 
@@ -72,6 +74,8 @@ export class MailService {
         `${this.formatMoney(expense.originalAmount, expense.currency)} (≈ ${this.formatMoney(expense.amountUsd, 'USD')})`,
       ],
     ];
+    if (expense.invoiceNumber) rows.push(['Invoice number', expense.invoiceNumber]);
+    if (expense.invoiceDate) rows.push(['Invoice date', expense.invoiceDate]);
     if (expense.dueDate) rows.push(['Due date', expense.dueDate]);
     if (expense.description) rows.push(['Description', expense.description]);
     if (expense.notes) rows.push(['Notes', expense.notes]);
@@ -100,6 +104,8 @@ export class MailService {
       `Country: ${expense.country}`,
       `Amount: ${this.formatMoney(expense.originalAmount, expense.currency)} (≈ ${this.formatMoney(expense.amountUsd, 'USD')})`,
     ];
+    if (expense.invoiceNumber) lines.push(`Invoice number: ${expense.invoiceNumber}`);
+    if (expense.invoiceDate) lines.push(`Invoice date: ${expense.invoiceDate}`);
     if (expense.dueDate) lines.push(`Due date: ${expense.dueDate}`);
     if (expense.description) lines.push(`Description: ${expense.description}`);
     if (expense.notes) lines.push(`Notes: ${expense.notes}`);
