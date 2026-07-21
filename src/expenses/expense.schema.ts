@@ -109,6 +109,12 @@ export class Expense {
   @Prop({ required: true })
   dueDate: string;
 
+  @Prop({ trim: true, maxlength: 100 })
+  invoiceNumber?: string;
+
+  @Prop()
+  invoiceDate?: string;
+
   @Prop({ required: true, default: 'PENDING_APPROVER' })
   status: string;
 

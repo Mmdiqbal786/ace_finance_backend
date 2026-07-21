@@ -37,6 +37,8 @@ export class ExpensesController {
       description: string;
       date: string;
       dueDate: string;
+      invoiceNumber?: string;
+      invoiceDate?: string;
     },
   ) {
     if (!file) {
@@ -60,6 +62,8 @@ export class ExpensesController {
         description: body.description,
         date: body.date,
         dueDate: body.dueDate,
+        invoiceNumber: body.invoiceNumber?.trim() || undefined,
+        invoiceDate: body.invoiceDate || undefined,
         id: expenseId,
       },
       {
