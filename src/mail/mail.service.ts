@@ -731,18 +731,20 @@ export class MailService {
     });
   }
 
-  /** Reminder to approvers when a pending request has only 1 day left. */
+  /** Reminder to approvers when a pending request has 3 or 1 days left. */
   async sendExpenseDueSoonToApprover(params: {
     to: string;
     approverName: string;
     expense: ExpenseMailSummary;
+    daysLeft: 1 | 3;
   }): Promise<{ sent: boolean; reason?: string }> {
     const queueUrl = `${this.frontendBase()}/dashboard/approver/`;
-    const subject = `Reminder: expense due tomorrow — ${params.expense.id}`;
+    const duePhrase = params.daysLeft === 1 ? 'tomorrow' : 'in 3 days';
+    const subject = `Reminder: expense due ${duePhrase} — ${params.expense.id}`;
     const text = [
       `Hello ${params.approverName},`,
       '',
-      'This expense request is still awaiting your approval and is due tomorrow (1 day left).',
+      `This expense request is still awaiting your approval and is due ${duePhrase} (${params.daysLeft} ${params.daysLeft === 1 ? 'day' : 'days'} left).`,
       '',
       this.expenseDetailsText(params.expense),
       '',
@@ -752,10 +754,10 @@ export class MailService {
     ].join('\n');
 
     const html = this.wrapHtml(
-      'Reminder: expense due tomorrow',
+      `Reminder: expense due ${duePhrase}`,
       `
         <p>Hello <strong>${this.escapeHtml(params.approverName)}</strong>,</p>
-        <p>This expense request is still awaiting your approval and has <strong>1 day left</strong> until the due date.</p>
+        <p>This expense request is still awaiting your approval and has <strong>${params.daysLeft} ${params.daysLeft === 1 ? 'day' : 'days'} left</strong> until the due date.</p>
         ${this.expenseDetailsHtml(params.expense)}
       `,
       'Open Approver Queue',
@@ -771,18 +773,20 @@ export class MailService {
     });
   }
 
-  /** Reminder to processors when an approved request has only 1 day left and is not fully paid. */
+  /** Reminder to processors when an approved request has 3 or 1 days left and is not fully paid. */
   async sendExpenseDueSoonToProcessor(params: {
     to: string;
     processorName: string;
     expense: ExpenseMailSummary;
+    daysLeft: 1 | 3;
   }): Promise<{ sent: boolean; reason?: string }> {
     const queueUrl = `${this.frontendBase()}/dashboard/processor/`;
-    const subject = `Reminder: approved expense due tomorrow — ${params.expense.id}`;
+    const duePhrase = params.daysLeft === 1 ? 'tomorrow' : 'in 3 days';
+    const subject = `Reminder: approved expense due ${duePhrase} — ${params.expense.id}`;
     const text = [
       `Hello ${params.processorName},`,
       '',
-      'This expense request is approved and still awaiting payment. It is due tomorrow (1 day left).',
+      `This expense request is approved and still awaiting payment. It is due ${duePhrase} (${params.daysLeft} ${params.daysLeft === 1 ? 'day' : 'days'} left).`,
       '',
       this.expenseDetailsText(params.expense),
       '',
@@ -792,10 +796,10 @@ export class MailService {
     ].join('\n');
 
     const html = this.wrapHtml(
-      'Reminder: approved expense due tomorrow',
+      `Reminder: approved expense due ${duePhrase}`,
       `
         <p>Hello <strong>${this.escapeHtml(params.processorName)}</strong>,</p>
-        <p>This expense request is <strong>already approved</strong> and still awaiting payment. It has <strong>1 day left</strong> until the due date.</p>
+        <p>This expense request is <strong>already approved</strong> and still awaiting payment. It has <strong>${params.daysLeft} ${params.daysLeft === 1 ? 'day' : 'days'} left</strong> until the due date.</p>
         ${this.expenseDetailsHtml(params.expense)}
       `,
       'Open Processor Queue',

@@ -147,9 +147,17 @@ export class Expense {
   @Prop()
   approverDueSoonReminderSentOn?: string;
 
+  /** Set when the 3-day-left approver reminder email was sent. */
+  @Prop()
+  approverThreeDayReminderSentOn?: string;
+
   /** Set when the 1-day-left processor reminder email was sent (YYYY-MM-DD of due date). */
   @Prop()
   processorDueSoonReminderSentOn?: string;
+
+  /** Set when the 3-day-left processor reminder email was sent. */
+  @Prop()
+  processorThreeDayReminderSentOn?: string;
 
   /** Stored filename under uploads/invoices/ */
   @Prop()
