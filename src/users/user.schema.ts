@@ -43,14 +43,14 @@ export class User {
   @Prop()
   loginOtpExpires?: Date;
 
-  /** Authenticator app secret (ADMIN optional 2FA) */
+  /** Authenticator app secret (required for non-admin; optional for ADMIN) */
   @Prop()
   totpSecret?: string;
 
   @Prop({ default: false })
   totpEnabled?: boolean;
 
-  /** Pending secret while admin completes QR setup */
+  /** Pending secret while user completes QR setup */
   @Prop()
   totpPendingSecret?: string;
 }

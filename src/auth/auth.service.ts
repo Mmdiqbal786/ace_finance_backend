@@ -59,14 +59,23 @@ export class AuthService {
     return methods;
   }
 
+  /** Non-admin users must enroll authenticator before using the dashboard. */
+  private mustSetupTotp(user: UserDocument): boolean {
+    if (user.role === 'ADMIN') return false;
+    return !(user.totpEnabled && user.totpSecret);
+  }
+
   private issueAccessToken(user: UserDocument) {
     const mustChangePassword = Boolean(user.mustChangePassword);
+    const mustSetupTotp = this.mustSetupTotp(user);
     const payload = {
       sub: user._id.toString(),
       name: user.name,
       email: user.email,
       role: user.role,
       mustChangePassword,
+      mustSetupTotp,
+      totpEnabled: Boolean(user.totpEnabled && user.totpSecret),
     };
     return {
       access_token: this.jwtService.sign(payload),
@@ -76,6 +85,8 @@ export class AuthService {
         email: user.email,
         role: user.role,
         mustChangePassword,
+        mustSetupTotp,
+        totpEnabled: Boolean(user.totpEnabled && user.totpSecret),
       },
     };
   }
@@ -219,20 +230,18 @@ export class AuthService {
   async getTotpStatus(userId: string, _role: string) {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
+    const enabled = Boolean(user.totpEnabled && user.totpSecret);
     return {
       available: true,
-      enabled: Boolean(user.totpEnabled && user.totpSecret),
+      enabled,
       pendingSetup: Boolean(user.totpPendingSecret),
+      required: user.role !== 'ADMIN',
+      canDisable: user.role === 'ADMIN',
+      canReplace: enabled,
     };
   }
 
-  async setupTotp(userId: string, _role: string) {
-    const user = await this.usersService.findById(userId);
-    if (!user) throw new UnauthorizedException('User not found');
-
-    const secret = generateSecret();
-    await this.usersService.setTotpPendingSecret(userId, secret);
-
+  private async buildTotpSetupPayload(user: UserDocument, secret: string) {
     const otpauthUrl = generateURI({
       issuer: 'Aceolution Finance',
       label: user.email,
@@ -242,11 +251,24 @@ export class AuthService {
       width: 220,
       margin: 2,
     });
+    return { secret, otpauthUrl, qrCodeDataUrl };
+  }
+
+  async setupTotp(userId: string, _role: string) {
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('User not found');
+    if (user.totpEnabled && user.totpSecret) {
+      throw new BadRequestException(
+        'Authenticator is already enabled. Use Change authenticator to replace it.',
+      );
+    }
+
+    const secret = generateSecret();
+    await this.usersService.setTotpPendingSecret(userId, secret);
+    const setup = await this.buildTotpSetupPayload(user, secret);
 
     return {
-      secret,
-      otpauthUrl,
-      qrCodeDataUrl,
+      ...setup,
       message: 'Scan the QR code with your authenticator app, then enter a code to enable it.',
     };
   }
@@ -267,16 +289,100 @@ export class AuthService {
       throw new BadRequestException('Invalid authenticator code. Try again.');
     }
 
+    const wasReplacing = Boolean(user.totpEnabled && user.totpSecret);
     await this.usersService.enableTotp(userId, user.totpPendingSecret);
+    const refreshed = await this.usersService.findById(userId);
+    if (!refreshed) throw new UnauthorizedException('User not found');
+    const tokenPayload = this.issueAccessToken(refreshed);
     return {
       enabled: true,
-      message: 'Authenticator app enabled. You can use it at sign-in.',
+      replaced: wasReplacing,
+      message: wasReplacing
+        ? 'Authenticator replaced. Your old app entry no longer works — remove it from your authenticator app.'
+        : 'Authenticator app enabled. You can use it at sign-in.',
+      ...tokenPayload,
+    };
+  }
+
+  async requestReplaceTotp(userId: string, password: string) {
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('User not found');
+    if (!user.totpEnabled || !user.totpSecret) {
+      throw new BadRequestException('Authenticator is not enabled on this account.');
+    }
+
+    const passwordOk = await bcrypt.compare(password || '', user.password);
+    if (!passwordOk) {
+      throw new BadRequestException('Current password is incorrect.');
+    }
+
+    const code = this.generateEmailOtp();
+    await this.usersService.setLoginOtp(userId, code);
+    const mailResult = await this.mailService.sendTotpReplaceOtpEmail({
+      to: user.email,
+      name: user.name,
+      code,
+    });
+    if (!mailResult.sent) {
+      throw new BadRequestException(
+        'We could not send the email code. Check SMTP settings or try again.',
+      );
+    }
+
+    return {
+      sent: true,
+      emailHint: this.maskEmail(user.email),
+      message:
+        'We sent a 6-digit code to your email. Enter it below, then scan a new QR code. Confirming replaces your old authenticator.',
+    };
+  }
+
+  async startReplaceTotp(
+    userId: string,
+    params: { password: string; code?: string },
+  ) {
+    const user = await this.usersService.findById(userId);
+    if (!user) throw new UnauthorizedException('User not found');
+    if (!user.totpEnabled || !user.totpSecret) {
+      throw new BadRequestException('Authenticator is not enabled on this account.');
+    }
+
+    const passwordOk = await bcrypt.compare(params.password || '', user.password);
+    if (!passwordOk) {
+      throw new BadRequestException('Current password is incorrect.');
+    }
+
+    const cleaned = String(params.code || '').replace(/\s/g, '');
+    if (!/^\d{6}$/.test(cleaned)) {
+      throw new BadRequestException('Enter the 6-digit code from your email.');
+    }
+
+    const otpOk = await this.usersService.verifyLoginOtp(userId, cleaned);
+    if (!otpOk) {
+      throw new UnauthorizedException('Invalid or expired email code.');
+    }
+
+    const secret = generateSecret();
+    await this.usersService.setTotpPendingSecret(userId, secret);
+    await this.usersService.clearLoginOtp(userId);
+    const setup = await this.buildTotpSetupPayload(user, secret);
+
+    return {
+      ...setup,
+      replacing: true,
+      message:
+        'Scan the new QR code, then enter a code from the new app. Confirming deletes your old authenticator secret.',
     };
   }
 
   async requestDisableTotp(userId: string, password: string) {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
+    if (user.role !== 'ADMIN') {
+      throw new BadRequestException(
+        'Authenticator is required for your role and cannot be disabled.',
+      );
+    }
     if (!user.totpEnabled) {
       throw new BadRequestException('Authenticator is not enabled on this account.');
     }
@@ -308,11 +414,17 @@ export class AuthService {
 
   async disableTotp(
     userId: string,
-    _role: string,
+    role: string,
     params: { password: string; code?: string },
   ) {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
+
+    if (role !== 'ADMIN' && user.role !== 'ADMIN') {
+      throw new BadRequestException(
+        'Authenticator is required for your role and cannot be disabled.',
+      );
+    }
 
     const passwordOk = await bcrypt.compare(params.password || '', user.password);
     if (!passwordOk) {
