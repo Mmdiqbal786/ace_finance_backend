@@ -12,6 +12,8 @@ const API_ROUTE_GROUPS: Array<{ title: string; routes: ApiRoute[] }> = [
       { method: 'GET', path: '/auth/totp/status' },
       { method: 'POST', path: '/auth/totp/setup' },
       { method: 'POST', path: '/auth/totp/enable' },
+      { method: 'POST', path: '/auth/totp/replace/send-code' },
+      { method: 'POST', path: '/auth/totp/replace/setup' },
       { method: 'POST', path: '/auth/totp/disable/send-code' },
       { method: 'POST', path: '/auth/totp/disable' },
       { method: 'POST', path: '/auth/change-password' },

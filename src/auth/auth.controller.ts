@@ -41,6 +41,21 @@ export class AuthController {
     return this.authService.enableTotp(req.user.userId, req.user.role, body.code);
   }
 
+  @Post('totp/replace/send-code')
+  @UseGuards(JwtAuthGuard)
+  async totpReplaceSendCode(@Request() req: any, @Body() body: { password: string }) {
+    return this.authService.requestReplaceTotp(req.user.userId, body.password);
+  }
+
+  @Post('totp/replace/setup')
+  @UseGuards(JwtAuthGuard)
+  async totpReplaceSetup(
+    @Request() req: any,
+    @Body() body: { password: string; code?: string },
+  ) {
+    return this.authService.startReplaceTotp(req.user.userId, body);
+  }
+
   @Post('totp/disable/send-code')
   @UseGuards(JwtAuthGuard)
   async totpDisableSendCode(@Request() req: any, @Body() body: { password: string }) {
