@@ -131,9 +131,11 @@ export class ExpensesService {
       this.mailService.sendExpenseSubmittedToRequester(summary),
     );
 
-    const approvers = await this.usersService.findActiveByRole('APPROVER');
+    const approvers = await this.usersService.findActiveApproversForProject(expense.project);
     if (approvers.length === 0) {
-      this.logger.warn(`No active APPROVER users to notify for expense ${expense.id}`);
+      this.logger.warn(
+        `No active APPROVER users assigned to project "${expense.project}" for expense ${expense.id}`,
+      );
       return;
     }
     for (const approver of approvers) {
@@ -178,6 +180,15 @@ export class ExpensesService {
     const category = await this.categoriesService.assertActiveName(expenseData.category);
     const project = await this.projectsService.assertActiveName(expenseData.project);
     const country = await this.countriesService.assertActiveCountry(expenseData.country);
+
+    const requester = await this.usersService.findByEmail(expenseData.requesterEmail);
+    if (requester?.role === 'REQUESTER') {
+      if (!this.usersService.userHasProjectAccess(requester, project)) {
+        throw new ForbiddenException(
+          `You are not assigned to project "${project}". Contact an administrator.`,
+        );
+      }
+    }
 
     if (!expenseData.dueDate) {
       throw new BadRequestException('Due date is required');
@@ -242,6 +253,31 @@ export class ExpensesService {
     return this.expenseModel.find().sort({ submittedAt: -1 }).lean().exec();
   }
 
+  async findAllForUser(actingUser: ActingUser): Promise<Expense[]> {
+    const all = await this.findAll();
+    if (actingUser.role !== 'APPROVER') {
+      return all;
+    }
+    const user = await this.usersService.findById(actingUser.userId);
+    const assigned = Array.isArray(user?.assignedProjects) ? user!.assignedProjects! : [];
+    if (assigned.length === 0) return [];
+    const allowed = new Set(assigned);
+    return all.filter((e) => allowed.has(e.project));
+  }
+
+  private async assertApproverProjectAccess(
+    expense: ExpenseDocument,
+    actingUser?: ActingUser,
+  ): Promise<void> {
+    if (!actingUser || actingUser.role !== 'APPROVER') return;
+    const user = await this.usersService.findById(actingUser.userId);
+    if (!user || !this.usersService.userHasProjectAccess(user, expense.project)) {
+      throw new ForbiddenException(
+        `You are not assigned to project "${expense.project}" and cannot act on this expense.`,
+      );
+    }
+  }
+
   async findMine(email: string): Promise<Expense[]> {
     return this.expenseModel
       .find({ requesterEmail: email.toLowerCase() })
@@ -264,6 +300,7 @@ export class ExpensesService {
     if (expense.status !== 'PENDING_APPROVER') {
       throw new BadRequestException(`Cannot approve expense. Current status is ${expense.status}`);
     }
+    await this.assertApproverProjectAccess(expense, actingUser);
 
     const now = new Date().toISOString();
     const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Approver';
@@ -287,6 +324,7 @@ export class ExpensesService {
     if (expense.status !== 'PENDING_APPROVER') {
       throw new BadRequestException(`Cannot reject expense. Current status is ${expense.status}`);
     }
+    await this.assertApproverProjectAccess(expense, actingUser);
 
     const now = new Date().toISOString();
     const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Approver';
@@ -336,6 +374,7 @@ export class ExpensesService {
       if (!isApproverRole) {
         throw new ForbiddenException('Only approvers can request changes on pending requests.');
       }
+      await this.assertApproverProjectAccess(expense, actingUser);
       if (target !== 'requester') {
         throw new BadRequestException('Approvers can only send requests back to the requester.');
       }
@@ -398,9 +437,11 @@ export class ExpensesService {
 
   private async notifyApproversOfReturn(expense: Expense | ExpenseDocument, notes: string) {
     const summary = this.toMailSummary(expense, notes);
-    const approvers = await this.usersService.findActiveByRole('APPROVER');
+    const approvers = await this.usersService.findActiveApproversForProject(expense.project);
     if (approvers.length === 0) {
-      this.logger.warn(`No active APPROVER users to notify for returned expense ${expense.id}`);
+      this.logger.warn(
+        `No active APPROVER users assigned to project "${expense.project}" for returned expense ${expense.id}`,
+      );
       return;
     }
     for (const approver of approvers) {
@@ -692,6 +733,14 @@ export class ExpensesService {
     }
     if (updateData.project && updateData.project !== expense.project) {
       const project = await this.projectsService.assertActiveName(updateData.project);
+      if (actingUser?.role === 'REQUESTER') {
+        const user = await this.usersService.findById(actingUser.userId);
+        if (!user || !this.usersService.userHasProjectAccess(user, project)) {
+          throw new ForbiddenException(
+            `You are not assigned to project "${project}". Contact an administrator.`,
+          );
+        }
+      }
       changes.push(`Project: "${expense.project || '—'}" ➔ "${project}"`);
       expense.project = project;
     }
@@ -960,7 +1009,16 @@ export class ExpensesService {
     let reminded = 0;
     for (const expense of candidates) {
       const summary = this.toMailSummary(expense);
-      for (const approver of approvers) {
+      const matching = approvers.filter((a) =>
+        a.assignedProjects.includes(expense.project),
+      );
+      if (matching.length === 0) {
+        this.logger.warn(
+          `Due-soon skipped for ${expense.id}: no approver assigned to "${expense.project}"`,
+        );
+        continue;
+      }
+      for (const approver of matching) {
         this.notify(
           `due-soon→approver ${approver.email} ${expense.id}`,
           this.mailService.sendExpenseDueSoonToApprover({

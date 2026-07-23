@@ -53,6 +53,20 @@ export class User {
   /** Pending secret while user completes QR setup */
   @Prop()
   totpPendingSecret?: string;
+
+  /**
+   * Project names this Requester/Approver may use.
+   * Empty for Admin/Processor. Required (non-empty) for Requester/Approver.
+   */
+  @Prop({ type: [String], default: [] })
+  assignedProjects?: string[];
+
+  /**
+   * Seeded demo personas (@acefinance.com): password-only login —
+   * skip email OTP and authenticator enrollment. Real users stay false.
+   */
+  @Prop({ default: false })
+  isDemo?: boolean;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

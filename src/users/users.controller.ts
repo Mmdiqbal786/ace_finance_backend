@@ -35,6 +35,7 @@ export class UsersController {
       email: string;
       role: 'ADMIN' | 'APPROVER' | 'PROCESSOR' | 'REQUESTER';
       password?: string;
+      assignedProjects?: string[];
     },
   ) {
     return this.usersService.create(body);
@@ -65,6 +66,7 @@ export class UsersController {
       role?: 'ADMIN' | 'APPROVER' | 'PROCESSOR' | 'REQUESTER';
       isActive?: boolean;
       password?: string;
+      assignedProjects?: string[];
     },
   ) {
     const { password, ...rest } = body;
