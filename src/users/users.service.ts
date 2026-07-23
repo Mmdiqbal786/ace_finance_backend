@@ -284,14 +284,14 @@ export class UsersService {
     const hashed = await bcrypt.hash('Admin@1234', 10);
     await this.userModel.create({
       name: 'Admin',
-      email: 'admin@acefinance.com',
+      email: 'finance@aceolution.com',
       password: hashed,
       role: 'ADMIN',
       mustChangePassword: false,
     });
     return {
       created: true,
-      message: 'Admin account created: admin@acefinance.com / Admin@1234',
+      message: 'Admin account created: finance@aceolution.com / Admin@1234',
     };
   }
 }
