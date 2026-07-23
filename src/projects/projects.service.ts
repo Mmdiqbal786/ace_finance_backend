@@ -14,6 +14,20 @@ const PROJECT_CODE_PREFIX = 'ACE-PR-';
 const PROJECT_CODE_PAD = 6;
 const PROJECT_CODE_PATTERN = /^ACE-PR-(\d{6})$/;
 
+/** Canonical project catalog names (ensured on boot). */
+export const REQUIRED_PROJECT_NAMES = [
+  'Google Art and culture (GAC)',
+  'Google News Lab (GNL)',
+  'Google News Program (GNP)',
+  'Google Information system (GIS) - Bothel',
+  'GDO - Google ops (location)',
+  'Google for Education - Chrome',
+  'SV Warehouse - ID & JP',
+  'Reimbursements - revenue',
+  'Field data collection (FDR) - Global logic',
+  'One-time fee (project)',
+] as const;
+
 @Injectable()
 export class ProjectsService implements OnModuleInit {
   private readonly logger = new Logger(ProjectsService.name);
@@ -24,10 +38,33 @@ export class ProjectsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureUniqueProjectCodes();
+    await this.ensureRequiredProjects();
     try {
       await this.projectModel.collection.createIndex({ code: 1 }, { unique: true });
     } catch (err: any) {
       this.logger.warn(`Project code unique index: ${err?.message || err}`);
+    }
+  }
+
+  /** Create any missing catalog projects (idempotent). */
+  async ensureRequiredProjects(): Promise<void> {
+    for (const name of REQUIRED_PROJECT_NAMES) {
+      const existing = await this.projectModel.findOne({ name }).exec();
+      if (existing) {
+        if (!existing.isActive) {
+          existing.isActive = true;
+          await existing.save();
+          this.logger.log(`Reactivated project "${name}"`);
+        }
+        continue;
+      }
+      try {
+        await this.create({ name });
+        this.logger.log(`Created required project "${name}"`);
+      } catch (err: any) {
+        if (err instanceof ConflictException) continue;
+        this.logger.warn(`Could not ensure project "${name}": ${err?.message || err}`);
+      }
     }
   }
 

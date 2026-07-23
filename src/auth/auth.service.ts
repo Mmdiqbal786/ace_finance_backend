@@ -47,6 +47,10 @@ export class AuthService {
   }
 
   private availableMethods(user: UserDocument): TwoFactorMethod[] {
+    // Demo personas: password only (no real inbox / authenticator).
+    if (user.isDemo) {
+      return [];
+    }
     // Admin: no email OTP. Authenticator only if they opted in.
     if (user.role === 'ADMIN') {
       return user.totpEnabled && user.totpSecret ? ['totp'] : [];
@@ -61,13 +65,16 @@ export class AuthService {
 
   /** Non-admin users must enroll authenticator before using the dashboard. */
   private mustSetupTotp(user: UserDocument): boolean {
-    if (user.role === 'ADMIN') return false;
+    if (user.role === 'ADMIN' || user.isDemo) return false;
     return !(user.totpEnabled && user.totpSecret);
   }
 
   private issueAccessToken(user: UserDocument) {
     const mustChangePassword = Boolean(user.mustChangePassword);
     const mustSetupTotp = this.mustSetupTotp(user);
+    const assignedProjects = Array.isArray(user.assignedProjects)
+      ? user.assignedProjects
+      : [];
     const payload = {
       sub: user._id.toString(),
       name: user.name,
@@ -76,6 +83,8 @@ export class AuthService {
       mustChangePassword,
       mustSetupTotp,
       totpEnabled: Boolean(user.totpEnabled && user.totpSecret),
+      assignedProjects,
+      isDemo: Boolean(user.isDemo),
     };
     return {
       access_token: this.jwtService.sign(payload),
@@ -87,6 +96,8 @@ export class AuthService {
         mustChangePassword,
         mustSetupTotp,
         totpEnabled: Boolean(user.totpEnabled && user.totpSecret),
+        assignedProjects,
+        isDemo: Boolean(user.isDemo),
       },
     };
   }
@@ -231,13 +242,15 @@ export class AuthService {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
     const enabled = Boolean(user.totpEnabled && user.totpSecret);
+    const isDemo = Boolean(user.isDemo);
     return {
-      available: true,
+      available: !isDemo,
       enabled,
       pendingSetup: Boolean(user.totpPendingSecret),
-      required: user.role !== 'ADMIN',
+      required: user.role !== 'ADMIN' && !isDemo,
       canDisable: user.role === 'ADMIN',
-      canReplace: enabled,
+      canReplace: enabled && !isDemo,
+      isDemo,
     };
   }
 
@@ -257,6 +270,11 @@ export class AuthService {
   async setupTotp(userId: string, _role: string) {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
+    if (user.isDemo) {
+      throw new BadRequestException(
+        'Authenticator is not used for this demo account (password-only login).',
+      );
+    }
     if (user.totpEnabled && user.totpSecret) {
       throw new BadRequestException(
         'Authenticator is already enabled. Use Change authenticator to replace it.',
@@ -554,11 +572,13 @@ export class AuthService {
     const admin = await this.usersService.seedAdmin();
     const categories = await this.categoriesService.ensureDefaults();
     const countries = await this.countriesService.ensureDefaults();
+    const demoUsers = await this.usersService.ensureDemoScopedUsers();
     return {
       ...admin,
       categories,
       countries,
-      message: `${admin.message} ${categories.message} ${countries.message}`.trim(),
+      demoUsers,
+      message: `${admin.message} ${categories.message} ${countries.message} ${demoUsers.message}`.trim(),
     };
   }
 }

@@ -25,6 +25,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       mustChangePassword: Boolean(payload.mustChangePassword),
       mustSetupTotp: Boolean(payload.mustSetupTotp),
       totpEnabled: Boolean(payload.totpEnabled),
+      assignedProjects: Array.isArray(payload.assignedProjects)
+        ? payload.assignedProjects
+        : [],
+      isDemo: Boolean(payload.isDemo),
     };
   }
 }

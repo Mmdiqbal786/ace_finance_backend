@@ -75,10 +75,16 @@ export class ExpensesController {
     );
   }
 
-  // Public — allow status tracking by email without login
+  // Protected — role-aware list (Approvers only see assigned projects)
   @Get()
-  async findAll(@Query('email') email?: string) {
-    const expenses = await this.expensesService.findAll();
+  @UseGuards(JwtAuthGuard)
+  async findAll(@Request() req: any, @Query('email') email?: string) {
+    const expenses = await this.expensesService.findAllForUser({
+      userId: req.user.userId,
+      name: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+    });
     if (email) {
       return expenses.filter((e) => e.requesterEmail.toLowerCase() === email.toLowerCase());
     }
