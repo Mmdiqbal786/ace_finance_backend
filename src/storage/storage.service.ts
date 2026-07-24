@@ -84,14 +84,15 @@ export class StorageService {
   private makeStructuredFileName(naming: AttachmentNaming, originalName: string): string {
     const expenseId = StorageService.sanitizeKey(naming.expenseId, 'EXP');
     const safeExt = extname(originalName || '').toLowerCase() || '.bin';
+    const stamp = StorageService.formatStamp(naming.at || new Date());
+    const uniq = Math.floor(100 + Math.random() * 900);
 
     if (naming.kind === 'invoice') {
-      return `${expenseId}_invoice${safeExt}`;
+      // Unique per upload so replace-attachment does not hit "resource already exists".
+      return `${expenseId}_${stamp}_${uniq}_invoice${safeExt}`;
     }
 
-    const stamp = StorageService.formatStamp(naming.at || new Date());
     const amount = StorageService.formatAmountUsd(naming.paymentAmountUsd);
-    const uniq = Math.floor(100 + Math.random() * 900);
     return `${expenseId}_${stamp}_${amount}_${uniq}_receipt${safeExt}`;
   }
 

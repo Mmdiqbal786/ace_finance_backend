@@ -245,12 +245,61 @@ export class ExpensesController {
     return this.expensesService.processorReject(id, notes, req.user);
   }
 
-  // REQUESTER (own pending / changes-requested) or ADMIN — staff use Request Changes instead of edit
+  // REQUESTER (own pending / changes-requested) or ADMIN — JSON field update
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'REQUESTER')
   async update(@Param('id') id: string, @Body() body: any, @Request() req: any) {
-    return this.expensesService.update(id, body, req.user);
+    const data = body ?? {};
+    return this.expensesService.update(
+      id,
+      {
+        requesterName: data.requesterName,
+        requesterEmail: data.requesterEmail,
+        originalAmount:
+          data.originalAmount !== undefined && data.originalAmount !== ''
+            ? Number(data.originalAmount)
+            : undefined,
+        country: data.country,
+        category: data.category,
+        project: data.project,
+        description: data.description,
+        date: data.date,
+        dueDate: data.dueDate,
+        invoiceNumber: data.invoiceNumber,
+        invoiceDate: data.invoiceDate,
+      },
+      req.user,
+    );
+  }
+
+  // Optional invoice replace during edit/resubmit
+  @Patch(':id/invoice')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'REQUESTER')
+  @UseInterceptors(FileInterceptor('invoice', attachmentMulterOptions('invoice')))
+  async replaceInvoice(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Request() req: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Invoice attachment is required.');
+    }
+    const stored = await this.storageService.saveAttachment('invoices', file, {
+      expenseId: id,
+      kind: 'invoice',
+    });
+    return this.expensesService.replaceInvoice(
+      id,
+      {
+        fileName: stored.fileName,
+        originalName: stored.originalName,
+        mimeType: stored.mimeType,
+        size: stored.size,
+      },
+      req.user,
+    );
   }
 
   // ADMIN / APPROVER / PROCESSOR — requesters cannot delete
