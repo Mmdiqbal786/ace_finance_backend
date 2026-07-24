@@ -757,7 +757,7 @@ export class ExpensesService {
       expense.dueDate = updateData.dueDate;
     }
     if (updateData.invoiceNumber !== undefined) {
-      const nextInvoiceNumber = updateData.invoiceNumber.trim();
+      const nextInvoiceNumber = String(updateData.invoiceNumber || '').trim();
       const prevInvoiceNumber = expense.invoiceNumber || '';
       if (nextInvoiceNumber !== prevInvoiceNumber) {
         changes.push(
@@ -767,7 +767,7 @@ export class ExpensesService {
       }
     }
     if (updateData.invoiceDate !== undefined) {
-      const nextInvoiceDate = updateData.invoiceDate.trim();
+      const nextInvoiceDate = String(updateData.invoiceDate || '').trim();
       const prevInvoiceDate = expense.invoiceDate || '';
       if (nextInvoiceDate !== prevInvoiceDate) {
         changes.push(
@@ -787,6 +787,7 @@ export class ExpensesService {
       updateData.country !== undefined && updateData.country !== expense.country;
     const amountChanged =
       updateData.originalAmount !== undefined &&
+      !Number.isNaN(Number(updateData.originalAmount)) &&
       Number(updateData.originalAmount) !== Number(expense.originalAmount || expense.amount);
 
     if (countryChanged || amountChanged) {
@@ -823,7 +824,6 @@ export class ExpensesService {
 
     if (wasChangesRequested) {
       expense.status = 'PENDING_APPROVER';
-      // Keep changeRequestNotes for audit in tracker/report; history also retains them.
       expense.history.push({
         action: 'Resubmitted after Changes',
         timestamp: now,
@@ -843,6 +843,53 @@ export class ExpensesService {
     }
 
     return expense.toObject() as Expense;
+  }
+
+  /** Replace invoice file on an editable expense (does not change workflow status). */
+  async replaceInvoice(
+    id: string,
+    newInvoice: InvoiceUploadMeta,
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
+    const expense = await this.expenseModel.findOne({ id }).exec();
+    if (!expense) {
+      await this.removeInvoiceFile(newInvoice.fileName);
+      throw new NotFoundException(`Expense with ID ${id} not found`);
+    }
+
+    try {
+      this.assertCanMutateExpenseDetails(expense, actingUser, 'edit');
+    } catch (err) {
+      await this.removeInvoiceFile(newInvoice.fileName);
+      throw err;
+    }
+
+    const previousInvoiceFileName = expense.invoiceFileName;
+    const now = new Date().toISOString();
+    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Dashboard User';
+
+    expense.history.push({
+      action: 'Request Details Modified',
+      timestamp: now,
+      user: userName,
+      notes: `Modified: Invoice attachment: "${expense.invoiceOriginalName || expense.invoiceFileName || '—'}" ➔ "${newInvoice.originalName}"`,
+    });
+
+    expense.invoiceFileName = newInvoice.fileName;
+    expense.invoiceOriginalName = newInvoice.originalName;
+    expense.invoiceMimeType = newInvoice.mimeType;
+    expense.invoiceSize = newInvoice.size;
+
+    try {
+      const saved = await expense.save();
+      if (previousInvoiceFileName && previousInvoiceFileName !== newInvoice.fileName) {
+        await this.removeInvoiceFile(previousInvoiceFileName);
+      }
+      return saved;
+    } catch (err) {
+      await this.removeInvoiceFile(newInvoice.fileName);
+      throw err;
+    }
   }
 
   async delete(id: string, actingUser?: ActingUser): Promise<void> {
