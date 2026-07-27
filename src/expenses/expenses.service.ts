@@ -15,6 +15,7 @@ export interface ActingUser {
   name: string;
   email: string;
   role: string;
+  assignedProjects?: string[];
 }
 
 export interface CreateExpenseInput {
@@ -258,8 +259,13 @@ export class ExpensesService {
     if (actingUser.role !== 'APPROVER') {
       return all;
     }
-    const user = await this.usersService.findById(actingUser.userId);
-    const assigned = Array.isArray(user?.assignedProjects) ? user!.assignedProjects! : [];
+    let assigned = Array.isArray(actingUser.assignedProjects)
+      ? actingUser.assignedProjects
+      : [];
+    if (assigned.length === 0 && actingUser.userId) {
+      const user = await this.usersService.findById(actingUser.userId);
+      assigned = Array.isArray(user?.assignedProjects) ? user!.assignedProjects! : [];
+    }
     if (assigned.length === 0) return [];
     const allowed = new Set(assigned);
     return all.filter((e) => allowed.has(e.project));
@@ -959,8 +965,12 @@ export class ExpensesService {
     }
   }
 
-  async getStats(): Promise<any> {
-    const expenses = await this.expenseModel.find().lean().exec();
+  async getStats(actingUser?: ActingUser): Promise<any> {
+    // Same visibility as the expense list: Approvers only see assigned projects;
+    // Admin / Processor see all.
+    const expenses = actingUser
+      ? await this.findAllForUser(actingUser)
+      : await this.findAll();
     let totalRequested = 0, totalProcessed = 0, pendingApproval = 0;
     let pendingProcessing = 0, processed = 0, rejected = 0;
     const byCategory: { [key: string]: number } = {};

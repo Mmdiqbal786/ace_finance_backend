@@ -84,6 +84,9 @@ export class ExpensesController {
       name: req.user.name,
       email: req.user.email,
       role: req.user.role,
+      assignedProjects: Array.isArray(req.user.assignedProjects)
+        ? req.user.assignedProjects
+        : [],
     });
     if (email) {
       return expenses.filter((e) => e.requesterEmail.toLowerCase() === email.toLowerCase());
@@ -91,11 +94,19 @@ export class ExpensesController {
     return expenses;
   }
 
-  // Protected — dashboard stats
+  // Protected — dashboard stats (scoped like expense list for Approvers)
   @Get('stats')
   @UseGuards(JwtAuthGuard)
-  async getStats() {
-    return this.expensesService.getStats();
+  async getStats(@Request() req: any) {
+    return this.expensesService.getStats({
+      userId: req.user.userId,
+      email: req.user.email,
+      name: req.user.name,
+      role: req.user.role,
+      assignedProjects: Array.isArray(req.user.assignedProjects)
+        ? req.user.assignedProjects
+        : [],
+    });
   }
 
   // Protected — logged-in user's own expenses only
