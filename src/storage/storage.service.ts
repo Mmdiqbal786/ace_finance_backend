@@ -6,7 +6,10 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import {
+  BlobServiceClient,
+  ContainerClient,
+} from '@azure/storage-blob';
 import { extname } from 'path';
 
 export type StorageFolder = 'invoices' | 'receipts';
@@ -25,30 +28,29 @@ export interface StoredAttachment {
   originalName: string;
   mimeType: string;
   size: number;
-  storage: 'supabase';
+  storage: 'azure';
 }
 
 @Injectable()
 export class StorageService {
   private readonly logger = new Logger(StorageService.name);
-  private readonly supabase: SupabaseClient;
-  private readonly bucket: string;
+  private readonly container: ContainerClient;
+  private readonly containerName: string;
 
   constructor(private readonly config: ConfigService) {
-    const url = this.config.get<string>('SUPABASE_URL')?.trim();
-    const key = this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY')?.trim();
-    this.bucket = this.config.get<string>('SUPABASE_STORAGE_BUCKET')?.trim() || 'ace-finance-files';
+    const azureConn = this.config.get<string>('AZURE_STORAGE_CONNECTION_STRING')?.trim();
+    this.containerName =
+      this.config.get<string>('AZURE_STORAGE_CONTAINER')?.trim() || 'ace-finance-files';
 
-    if (!url || !key) {
+    if (!azureConn) {
       throw new Error(
-        'Supabase Storage is required. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env',
+        'Azure Blob Storage is required. Set AZURE_STORAGE_CONNECTION_STRING in .env',
       );
     }
 
-    this.supabase = createClient(url, key, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    this.logger.log(`Supabase Storage only (bucket: ${this.bucket}) — local disk disabled`);
+    const service = BlobServiceClient.fromConnectionString(azureConn);
+    this.container = service.getContainerClient(this.containerName);
+    this.logger.log(`Azure Blob Storage (container: ${this.containerName})`);
   }
 
   private objectPath(folder: StorageFolder, fileName: string): string {
@@ -56,7 +58,7 @@ export class StorageService {
   }
 
   /** Keep keys safe for storage paths and Content-Disposition filenames. */
-  static sanitizeKey(value: string, fallback = 'user'): string {
+  static sanitizeKey(value: string, fallback = 'file'): string {
     const cleaned = String(value || '')
       .trim()
       .replace(/[^a-zA-Z0-9._-]+/g, '_')
@@ -88,7 +90,6 @@ export class StorageService {
     const uniq = Math.floor(100 + Math.random() * 900);
 
     if (naming.kind === 'invoice') {
-      // Unique per upload so replace-attachment does not hit "resource already exists".
       return `${expenseId}_${stamp}_${uniq}_invoice${safeExt}`;
     }
 
@@ -104,7 +105,7 @@ export class StorageService {
   }
 
   /**
-   * Upload to Supabase only. On failure throws — caller must not write MongoDB.
+   * Upload to Azure Blob. On failure throws — caller must not write MongoDB.
    * When `naming` is provided, uses EXP-{id}_invoice|receipt style names.
    */
   async saveAttachment(
@@ -118,25 +119,24 @@ export class StorageService {
       ? this.makeStructuredFileName({ ...naming, kind }, file.originalname)
       : `${kind === 'invoice' ? 'inv' : 'rcpt'}-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}${extname(file.originalname || '').toLowerCase() || '.bin'}`;
 
-    // Display name matches storage name (structured), not the uploader's original filename.
     const originalName = fileName;
     const mimeType = file.mimetype || 'application/octet-stream';
     const size = file.size || buffer.length;
     const path = this.objectPath(folder, fileName);
 
-    const { error } = await this.supabase.storage.from(this.bucket).upload(path, buffer, {
-      contentType: mimeType,
-      upsert: false,
-    });
-
-    if (error) {
-      this.logger.error(`Supabase upload failed (${path}): ${error.message}`);
+    try {
+      const block = this.container.getBlockBlobClient(path);
+      await block.uploadData(buffer, {
+        blobHTTPHeaders: { blobContentType: mimeType },
+      });
+    } catch (err: any) {
+      this.logger.error(`Azure upload failed (${path}): ${err?.message || err}`);
       throw new ServiceUnavailableException(
-        `File upload to cloud storage failed. Request was not saved. (${error.message})`,
+        `File upload to cloud storage failed. Request was not saved. (${err?.message || err})`,
       );
     }
 
-    return { fileName, originalName, mimeType, size, storage: 'supabase' };
+    return { fileName, originalName, mimeType, size, storage: 'azure' };
   }
 
   async readAttachment(
@@ -144,23 +144,31 @@ export class StorageService {
     fileName: string,
   ): Promise<{ buffer: Buffer }> {
     const path = this.objectPath(folder, fileName);
-    const { data, error } = await this.supabase.storage.from(this.bucket).download(path);
 
-    if (error || !data) {
-      this.logger.warn(`Supabase download failed (${path}): ${error?.message || 'not found'}`);
+    try {
+      const block = this.container.getBlockBlobClient(path);
+      const download = await block.download(0);
+      if (!download.readableStreamBody) {
+        throw new Error('empty body');
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of download.readableStreamBody) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      return { buffer: Buffer.concat(chunks) };
+    } catch (err: any) {
+      this.logger.warn(`Azure download failed (${path}): ${err?.message || err}`);
       throw new NotFoundException('File not found in cloud storage.');
     }
-
-    const arrayBuffer = await data.arrayBuffer();
-    return { buffer: Buffer.from(arrayBuffer) };
   }
 
   async deleteAttachment(folder: StorageFolder, fileName?: string): Promise<void> {
     if (!fileName) return;
     const path = this.objectPath(folder, fileName);
-    const { error } = await this.supabase.storage.from(this.bucket).remove([path]);
-    if (error) {
-      this.logger.warn(`Supabase delete failed for ${path}: ${error.message}`);
+    try {
+      await this.container.getBlockBlobClient(path).deleteIfExists();
+    } catch (err: any) {
+      this.logger.warn(`Azure delete failed for ${path}: ${err?.message || err}`);
     }
   }
 }

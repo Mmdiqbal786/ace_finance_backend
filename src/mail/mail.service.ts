@@ -1,3 +1,4 @@
+import { EmailClient } from '@azure/communication-email';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as dns from 'dns';
@@ -28,6 +29,9 @@ export class MailService {
   constructor(private readonly config: ConfigService) {}
 
   private isConfigured(): boolean {
+    if (this.config.get<string>('AZURE_COMMUNICATION_CONNECTION_STRING')?.trim()) {
+      return Boolean(this.config.get<string>('AZURE_EMAIL_SENDER')?.trim());
+    }
     if (this.config.get<string>('RESEND_API_KEY')?.trim()) return true;
     return Boolean(
       this.config.get<string>('SMTP_HOST') &&
@@ -110,6 +114,60 @@ export class MailService {
     if (expense.description) lines.push(`Description: ${expense.description}`);
     if (expense.notes) lines.push(`Notes: ${expense.notes}`);
     return lines.join('\n');
+  }
+
+  /** Azure Communication Services Email — HTTPS API (works on hosts that block SMTP). */
+  private async sendViaAzureCommunication(params: {
+    to: string;
+    subject: string;
+    text: string;
+    html: string;
+    context: string;
+  }): Promise<{ sent: boolean; reason?: string }> {
+    const connectionString = this.config
+      .get<string>('AZURE_COMMUNICATION_CONNECTION_STRING')
+      ?.trim();
+    const senderAddress = this.config.get<string>('AZURE_EMAIL_SENDER')?.trim();
+
+    if (!connectionString) {
+      return { sent: false, reason: 'AZURE_COMMUNICATION_CONNECTION_STRING missing' };
+    }
+    if (!senderAddress) {
+      return { sent: false, reason: 'AZURE_EMAIL_SENDER missing' };
+    }
+
+    try {
+      const client = new EmailClient(connectionString);
+      const poller = await client.beginSend({
+        senderAddress,
+        content: {
+          subject: params.subject,
+          plainText: params.text,
+          html: params.html,
+        },
+        recipients: {
+          to: [{ address: params.to.trim() }],
+        },
+      });
+
+      const result = await poller.pollUntilDone();
+      if (result.status !== 'Succeeded') {
+        const reason = result.error?.message || `Azure Email status: ${result.status}`;
+        this.logger.error(
+          `Failed to send ${params.context} via Azure Email to ${params.to}: ${reason}`,
+        );
+        return { sent: false, reason: String(reason) };
+      }
+
+      this.logger.log(`Sent ${params.context} email via Azure Email to ${params.to}`);
+      return { sent: true };
+    } catch (err: any) {
+      const reason = err?.message || 'Azure Email request failed';
+      this.logger.error(
+        `Failed to send ${params.context} via Azure Email to ${params.to}: ${reason}`,
+      );
+      return { sent: false, reason: String(reason) };
+    }
   }
 
   /** Resend HTTP API — works on Render free (SMTP ports are blocked). */
@@ -225,7 +283,11 @@ export class MailService {
       return { sent: false, reason: 'Mail not configured' };
     }
 
-    // Prefer Resend on Render free (outbound SMTP 25/465/587 is blocked)
+    // Prefer Azure Email (HTTPS), then Resend, then SMTP
+    if (this.config.get<string>('AZURE_COMMUNICATION_CONNECTION_STRING')?.trim()) {
+      return this.sendViaAzureCommunication(params);
+    }
+
     if (this.config.get<string>('RESEND_API_KEY')?.trim()) {
       return this.sendViaResend(params);
     }
@@ -238,7 +300,7 @@ export class MailService {
         `Failed to send ${params.context} email to ${params.to}: ${reason}`,
       );
       const hint = /timeout|ENETUNREACH|ECONNREFUSED/i.test(String(reason))
-        ? `${reason}. On Render free tier, SMTP is blocked — set RESEND_API_KEY (HTTPS email API) instead.`
+        ? `${reason}. On Render free tier, SMTP is blocked — set AZURE_COMMUNICATION_CONNECTION_STRING or RESEND_API_KEY instead.`
         : String(reason);
       return { sent: false, reason: hint };
     }
