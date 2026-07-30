@@ -1,5 +1,5 @@
 import * as dns from 'dns';
-// Prefer IPv4 — Render free tier often cannot reach outbound IPv6 (e.g. Gmail SMTP ENETUNREACH)
+// Prefer IPv4 — some hosts cannot reach outbound IPv6 (e.g. Gmail SMTP ENETUNREACH)
 dns.setDefaultResultOrder('ipv4first');
 // Use public DNS so MongoDB Atlas SRV & hostname resolution works
 dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);

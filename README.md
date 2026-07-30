@@ -1,98 +1,90 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Aceolution Finance — Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestJS API for Aceolution Finance: expense spend management, auth (JWT + 2FA), user/admin config, file uploads, and transactional email.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Stack
 
-## Description
+- **NestJS 11** + TypeScript
+- **MongoDB** (Mongoose)
+- **JWT / Passport** auth
+- **Azure Blob Storage** — invoice & payment receipt files
+- **Azure Communication Services Email** (preferred) — with optional Resend / Gmail SMTP fallback
+- Node.js `>=20 <23`
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Features
 
-## Project setup
+- Auth: login, email OTP, optional TOTP authenticator, password change / forgot / reset, welcome emails
+- Expense workflow: submit → approver approve/reject/request-changes → processor pay / partial-pay / reject
+- Role-scoped data: `REQUESTER` | `APPROVER` | `PROCESSOR` | `ADMIN`
+- Admin: users, categories, projects, countries
+- FX conversion helpers
+- File storage under Azure Blob folders `invoices` and `receipts`
+- Demo seed: `POST /auth/seed`
+- Health: `GET /` and `GET /health`
+
+## Setup
 
 ```bash
-$ npm install
+npm install
+cp .env.example .env
+# Edit .env with your MongoDB, JWT, Azure, and optional SMTP values
 ```
 
-## Compile and run the project
+## Environment
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MONGODB_URI` | Yes | MongoDB Atlas URI (include `/ace_finance` database name) |
+| `JWT_SECRET` | Yes | Long random secret for JWT signing |
+| `PORT` | No | Default `3001` |
+| `FRONTEND_URL` | Yes | Frontend origin for CORS + email links (e.g. `http://localhost:3000`) |
+| `AZURE_STORAGE_CONNECTION_STRING` | Yes | Storage account connection string |
+| `AZURE_STORAGE_CONTAINER` | Yes | Blob container name (e.g. `ace-finance-files`) |
+| `AZURE_COMMUNICATION_CONNECTION_STRING` | Recommended | ACS connection string (`endpoint=…;accesskey=…`) |
+| `AZURE_EMAIL_SENDER` | With ACS | Verified sender, e.g. `DoNotReply@….azurecomm.net` |
+| `SMTP_*` | Optional | Gmail/SMTP fallback when Azure Email is not set |
+| `RESEND_API_KEY` | Optional | Resend HTTPS fallback (used if set and Azure Email is not) |
+
+### Mail priority
+
+1. **Azure Communication Email** (if connection string + sender are set)
+2. **Resend** (if `RESEND_API_KEY` is set)
+3. **SMTP** (`SMTP_HOST` / `USER` / `PASS`)
+
+On hosts that block outbound SMTP, use Azure Email or Resend (HTTPS).
+
+### Azure Email setup (short)
+
+1. Create **Communication Service** → copy Keys connection string  
+2. Create **Email Communication Service** → Provision domains → add Azure subdomain (or custom domain)  
+3. Connect that domain to the Communication Service  
+4. Set `AZURE_EMAIL_SENDER` to the MailFrom address (usually `DoNotReply@….azurecomm.net`)
+
+## Run
 
 ```bash
-# development
-$ npm run start
+# development (watch)
+npm run start:dev
 
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+# production build
+npm run build
+npm run start:prod
 ```
 
-## Run tests
+API base: `http://localhost:3001`
 
-```bash
-# unit tests
-$ npm run test
+## Scripts
 
-# e2e tests
-$ npm run test:e2e
+| Command | Description |
+|---------|-------------|
+| `npm run start:dev` | Nest watch mode |
+| `npm run build` | Compile to `dist/` |
+| `npm run start` / `start:prod` | Run compiled app |
+| `npm run lint` | ESLint |
+| `npm test` | Unit tests |
 
-# test coverage
-$ npm run test:cov
-```
+## Related
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- Frontend: sibling repo / folder `ace_finance_frontend`
+- Live backend: https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net/
+- Live frontend: https://ambitious-ocean-0aff06400.7.azurestaticapps.net/

@@ -170,7 +170,7 @@ export class MailService {
     }
   }
 
-  /** Resend HTTP API — works on Render free (SMTP ports are blocked). */
+  /** Resend HTTP API — HTTPS email fallback when SMTP ports are blocked. */
   private async sendViaResend(params: {
     to: string;
     subject: string;
@@ -300,7 +300,7 @@ export class MailService {
         `Failed to send ${params.context} email to ${params.to}: ${reason}`,
       );
       const hint = /timeout|ENETUNREACH|ECONNREFUSED/i.test(String(reason))
-        ? `${reason}. On Render free tier, SMTP is blocked — set AZURE_COMMUNICATION_CONNECTION_STRING or RESEND_API_KEY instead.`
+        ? `${reason}. Outbound SMTP may be blocked — set AZURE_COMMUNICATION_CONNECTION_STRING or RESEND_API_KEY instead.`
         : String(reason);
       return { sent: false, reason: hint };
     }
