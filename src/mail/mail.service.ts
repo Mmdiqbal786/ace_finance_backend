@@ -44,6 +44,28 @@ export class MailService {
     return (this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000').replace(/\/$/, '');
   }
 
+  /** Optional BCC copies (comma-separated), e.g. finance@aceolution.com */
+  private mailBccList(excludeTo?: string): string[] {
+    const raw = this.config.get<string>('AZURE_EMAIL_BCC')?.trim()
+      || this.config.get<string>('MAIL_BCC')?.trim()
+      || '';
+    if (!raw) return [];
+    const exclude = (excludeTo || '').trim().toLowerCase();
+    return raw
+      .split(/[,;]+/)
+      .map((a) => a.trim())
+      .filter((a) => a && a.toLowerCase() !== exclude);
+  }
+
+  /** Optional Reply-To, e.g. finance@aceolution.com */
+  private mailReplyTo(): string | undefined {
+    return (
+      this.config.get<string>('AZURE_EMAIL_REPLY_TO')?.trim() ||
+      this.config.get<string>('MAIL_REPLY_TO')?.trim() ||
+      undefined
+    );
+  }
+
   private escapeHtml(value: string): string {
     return String(value || '')
       .replace(/&/g, '&amp;')
@@ -138,6 +160,8 @@ export class MailService {
 
     try {
       const client = new EmailClient(connectionString);
+      const bcc = this.mailBccList(params.to).map((address) => ({ address }));
+      const replyToAddr = this.mailReplyTo();
       const poller = await client.beginSend({
         senderAddress,
         content: {
@@ -147,7 +171,9 @@ export class MailService {
         },
         recipients: {
           to: [{ address: params.to.trim() }],
+          ...(bcc.length ? { bcc } : {}),
         },
+        ...(replyToAddr ? { replyTo: [{ address: replyToAddr }] } : {}),
       });
 
       const result = await poller.pollUntilDone();
@@ -159,7 +185,10 @@ export class MailService {
         return { sent: false, reason: String(reason) };
       }
 
-      this.logger.log(`Sent ${params.context} email via Azure Email to ${params.to}`);
+      this.logger.log(
+        `Sent ${params.context} email via Azure Email to ${params.to}` +
+          (bcc.length ? ` (bcc: ${bcc.map((b) => b.address).join(', ')})` : ''),
+      );
       return { sent: true };
     } catch (err: any) {
       const reason = err?.message || 'Azure Email request failed';
@@ -187,6 +216,8 @@ export class MailService {
       'Aceolution Finance <onboarding@resend.dev>';
 
     try {
+      const bcc = this.mailBccList(params.to);
+      const replyTo = this.mailReplyTo();
       const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
@@ -196,6 +227,8 @@ export class MailService {
         body: JSON.stringify({
           from,
           to: [params.to.trim()],
+          ...(bcc.length ? { bcc } : {}),
+          ...(replyTo ? { reply_to: replyTo } : {}),
           subject: params.subject,
           html: params.html,
           text: params.text,
@@ -259,6 +292,10 @@ export class MailService {
     await transporter.sendMail({
       from: `"Aceolution Finance" <${from}>`,
       to: params.to.trim(),
+      ...(this.mailBccList(params.to).length
+        ? { bcc: this.mailBccList(params.to).join(', ') }
+        : {}),
+      ...(this.mailReplyTo() ? { replyTo: this.mailReplyTo() } : {}),
       subject: params.subject,
       text: params.text,
       html: params.html,
