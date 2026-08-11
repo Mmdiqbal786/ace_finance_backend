@@ -87,4 +87,4 @@ API base: `http://localhost:3001`
 
 - Frontend: sibling repo / folder `ace_finance_frontend`
 - Live backend: https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net/
-- Live frontend: https://ambitious-ocean-0aff06400.7.azurestaticapps.net/
+- Live frontend: https://finance.aceolution.com/
