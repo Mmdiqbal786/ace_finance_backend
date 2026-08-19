@@ -21,6 +21,7 @@ NestJS API for Aceolution Finance: expense spend management, auth (JWT + 2FA), u
 - File storage under Azure Blob folders `invoices` and `receipts`
 - Demo seed: `POST /auth/seed`
 - Health: `GET /` and `GET /health`
+- Dashboard filtering (client-side): Project + `submittedAt` date range (From/To)
 
 ## Setup
 
