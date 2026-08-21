@@ -16,12 +16,15 @@ NestJS API for Aceolution Finance: expense spend management, auth (JWT + 2FA), u
 - Auth: login, email OTP, optional TOTP authenticator, password change / forgot / reset, welcome emails
 - Expense workflow: submit → approver approve/reject/request-changes → processor pay / partial-pay / reject
 - Role-scoped data: `REQUESTER` | `APPROVER` | `PROCESSOR` | `ADMIN`
+- **Project assignment:** Requester and Approver must have one or more `assignedProjects` (Admin create/edit). Requesters submit only those projects; Approvers only see/act on (and get emails / due-soon reminders for) expenses in their assigned projects. Admin and Processor are not project-scoped.
+- **Demo users:** seeded `@acefinance.com` personas (`isDemo`) are password-only (no Email OTP / Authenticator) for easy project demos; media demo accounts may still use OTP + TOTP
 - Admin: users, categories, projects, countries
 - FX conversion helpers
 - File storage under Azure Blob folders `invoices` and `receipts`
-- Demo seed: `POST /auth/seed`
+- Demo seed: `POST /auth/seed` (and boot seed for demo staff)
 - Health: `GET /` and `GET /health`
 - Dashboard filtering (client-side): Project + `submittedAt` date range (From/To)
+- In-app notifications per user (same audience as workflow emails), with unread count API — frontend bell may be temporarily hidden while APIs remain available
 
 ## Setup
 

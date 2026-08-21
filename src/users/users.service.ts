@@ -59,13 +59,20 @@ export class UsersService implements OnModuleInit {
   async findActiveByRole(
     role: UserRole,
   ): Promise<
-    Array<{ name: string; email: string; role: UserRole; assignedProjects: string[] }>
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      role: UserRole;
+      assignedProjects: string[];
+    }>
   > {
     const users = await this.userModel
       .find({ role, isActive: true }, { name: 1, email: 1, role: 1, assignedProjects: 1 })
       .lean()
       .exec();
     return users.map((u) => ({
+      id: u._id.toString(),
       name: u.name,
       email: u.email,
       role: u.role,
@@ -73,15 +80,15 @@ export class UsersService implements OnModuleInit {
     }));
   }
 
-  /** Approvers assigned to a given project name (for workflow emails). */
+  /** Approvers assigned to a given project name (for workflow emails / in-app alerts). */
   async findActiveApproversForProject(
     projectName: string,
-  ): Promise<Array<{ name: string; email: string }>> {
+  ): Promise<Array<{ id: string; name: string; email: string }>> {
     const project = (projectName || '').trim();
     const approvers = await this.findActiveByRole('APPROVER');
     return approvers
       .filter((a) => a.assignedProjects.includes(project))
-      .map((a) => ({ name: a.name, email: a.email }));
+      .map((a) => ({ id: a.id, name: a.name, email: a.email }));
   }
 
   private normalizeAssignedProjects(

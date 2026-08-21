@@ -11,6 +11,7 @@ import { FxModule } from '../fx/fx.module';
 import { MailModule } from '../mail/mail.module';
 import { UsersModule } from '../users/users.module';
 import { StorageModule } from '../storage/storage.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { StorageModule } from '../storage/storage.module';
     MailModule,
     UsersModule,
     StorageModule,
+    NotificationsModule,
   ],
   controllers: [ExpensesController],
   providers: [ExpensesService, ExpensesScheduler],

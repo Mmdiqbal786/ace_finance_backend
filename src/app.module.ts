@@ -11,6 +11,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { ProjectsModule } from './projects/projects.module';
 import { CountriesModule } from './countries/countries.module';
 import { FxModule } from './fx/fx.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { FxModule } from './fx/fx.module';
     ProjectsModule,
     CountriesModule,
     FxModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

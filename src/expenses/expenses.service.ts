@@ -9,6 +9,7 @@ import { FxService } from '../fx/fx.service';
 import { MailService, ExpenseMailSummary } from '../mail/mail.service';
 import { UsersService } from '../users/users.service';
 import { StorageService } from '../storage/storage.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export interface ActingUser {
   userId: string;
@@ -57,6 +58,7 @@ export class ExpensesService {
     private readonly mailService: MailService,
     private readonly usersService: UsersService,
     private readonly storageService: StorageService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /** e.g. EXP-1784269812102-4653 */
@@ -131,6 +133,13 @@ export class ExpensesService {
       `submitted→requester ${expense.id}`,
       this.mailService.sendExpenseSubmittedToRequester(summary),
     );
+    void this.notificationsService.enqueueForRequesterEmail(expense.requesterEmail, {
+      type: 'EXPENSE_SUBMITTED',
+      title: 'Expense submitted',
+      message: `Your expense ${expense.id} (${expense.project}) was submitted for approval.`,
+      expenseId: expense.id,
+      project: expense.project,
+    });
 
     const approvers = await this.usersService.findActiveApproversForProject(expense.project);
     if (approvers.length === 0) {
@@ -149,6 +158,16 @@ export class ExpensesService {
         }),
       );
     }
+    this.notificationsService.enqueue(
+      approvers.map((approver) => ({
+        userId: approver.id,
+        type: 'EXPENSE_PENDING_APPROVAL' as const,
+        title: 'New expense awaiting approval',
+        message: `${expense.requesterName} submitted ${expense.id} for ${expense.project}.`,
+        expenseId: expense.id,
+        project: expense.project,
+      })),
+    );
   }
 
   private async notifyProcessorsOfApproval(expense: Expense | ExpenseDocument, notes?: string) {
@@ -168,6 +187,16 @@ export class ExpensesService {
         }),
       );
     }
+    this.notificationsService.enqueue(
+      processors.map((processor) => ({
+        userId: processor.id,
+        type: 'EXPENSE_APPROVED' as const,
+        title: 'Expense approved — ready to pay',
+        message: `${expense.id} (${expense.project}) was approved and is awaiting payment.`,
+        expenseId: expense.id,
+        project: expense.project,
+      })),
+    );
   }
 
   async create(
@@ -348,6 +377,13 @@ export class ExpensesService {
       `rejected-by-approver ${saved.id}`,
       this.mailService.sendExpenseRejectedByApprover(this.toMailSummary(saved, notes)),
     );
+    void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
+      type: 'EXPENSE_REJECTED_APPROVER',
+      title: 'Expense rejected',
+      message: `Your expense ${saved.id} (${saved.project}) was rejected by an approver.`,
+      expenseId: saved.id,
+      project: saved.project,
+    });
     return saved;
   }
 
@@ -438,6 +474,13 @@ export class ExpensesService {
         this.toMailSummary(saved, trimmedNotes),
       ),
     );
+    void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
+      type: 'EXPENSE_CHANGES_REQUESTED',
+      title: 'Changes requested',
+      message: `Changes were requested on ${saved.id} (${saved.project}). Please update and resubmit.`,
+      expenseId: saved.id,
+      project: saved.project,
+    });
     return saved;
   }
 
@@ -460,6 +503,16 @@ export class ExpensesService {
         }),
       );
     }
+    this.notificationsService.enqueue(
+      approvers.map((approver) => ({
+        userId: approver.id,
+        type: 'EXPENSE_RETURNED_APPROVER' as const,
+        title: 'Expense returned for re-review',
+        message: `${expense.id} (${expense.project}) was returned to approver for re-review.`,
+        expenseId: expense.id,
+        project: expense.project,
+      })),
+    );
   }
 
   private assertPayableStatus(status: string, action: string) {
@@ -532,6 +585,13 @@ export class ExpensesService {
       `fully-paid ${saved.id}`,
       this.mailService.sendExpenseFullyPaidToRequester(this.toMailSummary(saved, notes)),
     );
+    void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
+      type: 'EXPENSE_FULLY_PAID',
+      title: 'Expense paid',
+      message: `Your expense ${saved.id} (${saved.project}) has been fully paid.`,
+      expenseId: saved.id,
+      project: saved.project,
+    });
     return saved;
   }
 
@@ -609,6 +669,13 @@ export class ExpensesService {
           `fully-paid (partial final) ${saved.id}`,
           this.mailService.sendExpenseFullyPaidToRequester(this.toMailSummary(saved, notes)),
         );
+        void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
+          type: 'EXPENSE_FULLY_PAID',
+          title: 'Expense paid',
+          message: `Your expense ${saved.id} (${saved.project}) has been fully paid.`,
+          expenseId: saved.id,
+          project: saved.project,
+        });
       }
       return saved;
     } catch (err) {
@@ -638,6 +705,13 @@ export class ExpensesService {
       `rejected-by-processor ${saved.id}`,
       this.mailService.sendExpenseRejectedByProcessor(this.toMailSummary(saved, notes)),
     );
+    void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
+      type: 'EXPENSE_REJECTED_PROCESSOR',
+      title: 'Payout rejected',
+      message: `Payment for ${saved.id} (${saved.project}) was rejected by finance.`,
+      expenseId: saved.id,
+      project: saved.project,
+    });
     return saved;
   }
 
@@ -1086,6 +1160,16 @@ export class ExpensesService {
           }),
         );
       }
+      this.notificationsService.enqueue(
+        matching.map((approver) => ({
+          userId: approver.id,
+          type: 'EXPENSE_DUE_SOON' as const,
+          title: `Expense due in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
+          message: `${expense.id} (${expense.project}) needs approval soon.`,
+          expenseId: expense.id,
+          project: expense.project,
+        })),
+      );
       expense[reminderField] = dueDateStr;
       await expense.save();
       reminded++;
@@ -1151,6 +1235,16 @@ export class ExpensesService {
           }),
         );
       }
+      this.notificationsService.enqueue(
+        processors.map((processor) => ({
+          userId: processor.id,
+          type: 'EXPENSE_DUE_SOON' as const,
+          title: `Payment due in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
+          message: `${expense.id} (${expense.project}) is awaiting payout soon.`,
+          expenseId: expense.id,
+          project: expense.project,
+        })),
+      );
       expense[reminderField] = dueDateStr;
       await expense.save();
       reminded++;
