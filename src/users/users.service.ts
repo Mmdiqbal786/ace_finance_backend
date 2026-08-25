@@ -11,6 +11,7 @@ import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { User, UserDocument, UserRole } from './user.schema';
+import { Expense, ExpenseDocument } from '../expenses/expense.schema';
 import { MailService } from '../mail/mail.service';
 import { ProjectsService } from '../projects/projects.service';
 import { DEMO_SCOPED_USERS } from './demo-users.seed';
@@ -19,12 +20,33 @@ function roleNeedsProjects(role: UserRole): boolean {
   return role === 'REQUESTER' || role === 'APPROVER';
 }
 
+const LEGACY_PROCESSOR_EMAIL = 'priya.processor@acefinance.com';
+const LEGACY_PROCESSOR_NAME = 'Priya Sharma';
+const NEW_PROCESSOR_EMAIL = 'alisha.processor@acefinance.com';
+const NEW_PROCESSOR_NAME = 'Alisha';
+
+function rewriteProcessorLabel(value?: string | null): string | undefined {
+  if (!value) return value ?? undefined;
+  let next = value;
+  if (next.includes(LEGACY_PROCESSOR_NAME)) {
+    next = next.split(LEGACY_PROCESSOR_NAME).join(NEW_PROCESSOR_NAME);
+  }
+  if (next.toLowerCase().includes(LEGACY_PROCESSOR_EMAIL)) {
+    next = next.replace(
+      new RegExp(LEGACY_PROCESSOR_EMAIL, 'ig'),
+      NEW_PROCESSOR_EMAIL,
+    );
+  }
+  return next;
+}
+
 @Injectable()
 export class UsersService implements OnModuleInit {
   private readonly logger = new Logger(UsersService.name);
 
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
     private readonly mailService: MailService,
     private readonly projectsService: ProjectsService,
   ) {}
@@ -33,6 +55,7 @@ export class UsersService implements OnModuleInit {
     try {
       await this.projectsService.ensureRequiredProjects();
       await this.ensureDemoScopedUsers();
+      await this.rewriteLegacyProcessorHistory();
     } catch (err: any) {
       this.logger.warn(
         `Demo user seed skipped: ${err?.message || err}`,
@@ -436,6 +459,20 @@ export class UsersService implements OnModuleInit {
     updated: number;
     message: string;
   }> {
+    // Rename legacy demo processor (Priya Sharma → Alisha).
+    const legacyProcessor = await this.findByEmail(LEGACY_PROCESSOR_EMAIL);
+    if (legacyProcessor) {
+      const taken = await this.findByEmail(NEW_PROCESSOR_EMAIL);
+      if (!taken || String(taken._id) === String(legacyProcessor._id)) {
+        legacyProcessor.name = NEW_PROCESSOR_NAME;
+        legacyProcessor.email = NEW_PROCESSOR_EMAIL;
+        await legacyProcessor.save();
+        this.logger.log(
+          `Migrated demo processor ${LEGACY_PROCESSOR_EMAIL} → ${NEW_PROCESSOR_EMAIL} (${NEW_PROCESSOR_NAME})`,
+        );
+      }
+    }
+
     let created = 0;
     let updated = 0;
 
@@ -517,5 +554,130 @@ export class UsersService implements OnModuleInit {
       updated,
       message: `Demo users: ${created} created, ${updated} updated.`,
     };
+  }
+
+  /**
+   * Expense audit rows store "Name (email)" snapshots. Rewrite legacy
+   * Priya Sharma / priya.processor@… labels after the demo user rename.
+   */
+  private async rewriteLegacyProcessorHistory(): Promise<void> {
+    const filter = {
+      $or: [
+        { 'history.user': new RegExp(LEGACY_PROCESSOR_EMAIL, 'i') },
+        { 'history.user': LEGACY_PROCESSOR_NAME },
+        { changeRequestedBy: new RegExp(LEGACY_PROCESSOR_EMAIL, 'i') },
+        { changeRequestedBy: LEGACY_PROCESSOR_NAME },
+        { 'paymentReceipts.uploadedBy': new RegExp(LEGACY_PROCESSOR_EMAIL, 'i') },
+        { 'paymentReceipts.uploadedBy': LEGACY_PROCESSOR_NAME },
+      ],
+    };
+
+    const expenses = await this.expenseModel.find(filter).exec();
+    let updated = 0;
+
+    for (const expense of expenses) {
+      let dirty = false;
+
+      if (Array.isArray(expense.history)) {
+        for (const entry of expense.history) {
+          const next = rewriteProcessorLabel(entry.user);
+          if (next && next !== entry.user) {
+            entry.user = next;
+            dirty = true;
+          }
+        }
+      }
+
+      const nextChangeBy = rewriteProcessorLabel(expense.changeRequestedBy);
+      if (
+        nextChangeBy !== undefined &&
+        nextChangeBy !== expense.changeRequestedBy
+      ) {
+        expense.changeRequestedBy = nextChangeBy;
+        dirty = true;
+      }
+
+      if (Array.isArray((expense as any).paymentReceipts)) {
+        for (const receipt of (expense as any).paymentReceipts) {
+          const nextUploadedBy = rewriteProcessorLabel(receipt.uploadedBy);
+          if (
+            nextUploadedBy !== undefined &&
+            nextUploadedBy !== receipt.uploadedBy
+          ) {
+            receipt.uploadedBy = nextUploadedBy;
+            dirty = true;
+          }
+        }
+      }
+
+      if (dirty) {
+        expense.markModified('history');
+        expense.markModified('paymentReceipts');
+        await expense.save();
+        updated += 1;
+      }
+    }
+
+    // In-app notifications may also contain the old name/email in message text.
+    try {
+      const notifications = this.expenseModel.db.collection('notifications');
+      const notifResult = await notifications.updateMany(
+        {
+          $or: [
+            { message: new RegExp(LEGACY_PROCESSOR_EMAIL, 'i') },
+            { message: LEGACY_PROCESSOR_NAME },
+            { title: new RegExp(LEGACY_PROCESSOR_EMAIL, 'i') },
+            { title: LEGACY_PROCESSOR_NAME },
+          ],
+        },
+        [
+          {
+            $set: {
+              message: {
+                $replaceAll: {
+                  input: {
+                    $replaceAll: {
+                      input: { $ifNull: ['$message', ''] },
+                      find: LEGACY_PROCESSOR_NAME,
+                      replacement: NEW_PROCESSOR_NAME,
+                    },
+                  },
+                  find: LEGACY_PROCESSOR_EMAIL,
+                  replacement: NEW_PROCESSOR_EMAIL,
+                },
+              },
+              title: {
+                $replaceAll: {
+                  input: {
+                    $replaceAll: {
+                      input: { $ifNull: ['$title', ''] },
+                      find: LEGACY_PROCESSOR_NAME,
+                      replacement: NEW_PROCESSOR_NAME,
+                    },
+                  },
+                  find: LEGACY_PROCESSOR_EMAIL,
+                  replacement: NEW_PROCESSOR_EMAIL,
+                },
+              },
+            },
+          },
+        ],
+      );
+      if (notifResult.modifiedCount) {
+        this.logger.log(
+          `Rewrote legacy processor labels in ${notifResult.modifiedCount} notification(s)`,
+        );
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Notification label rewrite skipped: ${err?.message || err}`,
+      );
+    }
+
+    if (updated) {
+      this.logger.log(
+        `Rewrote legacy processor labels in ${updated} expense audit trail(s)`,
+      );
+    }
   }
 }

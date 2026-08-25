@@ -110,8 +110,8 @@ export const DEMO_SCOPED_USERS: DemoSeedUser[] = [
     isDemo: true,
   },
   {
-    name: 'Priya Sharma',
-    email: 'priya.processor@acefinance.com',
+    name: 'Alisha',
+    email: 'alisha.processor@acefinance.com',
     password: 'Processor@1234',
     role: 'PROCESSOR',
     assignedProjects: [],
