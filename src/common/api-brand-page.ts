@@ -1,280 +1,175 @@
-export type BrandPageAction = {
+import {
+  ICONS,
+  brandHead,
+  brandMark,
+  escapeHtml,
+  frontendUrl,
+} from './brand/brand-theme';
+
+export type StatusTone = 'slate' | 'sky' | 'emerald' | 'amber' | 'rose';
+
+export type StatusAction = {
   label: string;
   href: string;
   primary?: boolean;
 };
 
-export type BrandPageOptions = {
-  title: string;
-  badge: string;
-  badgeTone?: 'ok' | 'warn' | 'error';
-  heading: string;
-  message: string;
-  detail?: string;
-  actions?: BrandPageAction[];
+export type StatusCheck = {
+  label: string;
+  value: string;
+  state?: 'ok' | 'bad' | 'info';
 };
 
-function escapeHtml(value: string): string {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+export type StatusPageOptions = {
+  title: string;
+  description: string;
+  code?: string;
+  tone?: StatusTone;
+  icon?: string;
+  meta?: string;
+  detail?: string;
+  checks?: StatusCheck[];
+  actions?: StatusAction[];
+  footnote?: string;
+};
 
-/** Shared branded HTML shell for API status / error pages. */
-export function renderBrandPage(options: BrandPageOptions): string {
-  const tone = options.badgeTone || 'error';
-  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+const STATUS_CSS = `
+  .status-wrap { display: flex; min-height: 100dvh; align-items: center; justify-content: center; padding: 40px 16px; }
+  .status-card {
+    width: 100%; max-width: 420px; border-radius: 20px; background: #fff;
+    padding: 36px; box-shadow: 0 25px 60px rgba(14, 42, 69, 0.35);
+  }
+  .status-card .brand { margin-bottom: 20px; }
+  .tone { display: inline-flex; width: 48px; height: 48px; align-items: center; justify-content: center; border-radius: 16px; }
+  .tone-slate { background: var(--af-sky); color: var(--af-navy); }
+  .tone-sky { background: rgba(78, 182, 232, 0.22); color: var(--af-navy); }
+  .tone-emerald { background: rgba(52, 211, 153, 0.15); color: #065f46; }
+  .tone-amber { background: rgba(251, 191, 36, 0.15); color: #b45309; }
+  .tone-rose { background: rgba(248, 113, 113, 0.15); color: #b91c1c; }
+  .status-code { margin: 16px 0 0; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--af-subtle); }
+  .status-meta { margin: 12px 0 0; font-size: 14px; color: #5b7a90; }
+  .status-card h1 { margin: 8px 0 0; font-size: 28px; font-weight: 800; letter-spacing: -0.03em; color: var(--af-navy); }
+  .status-desc { margin: 12px 0 0; font-size: 14px; line-height: 1.65; color: var(--af-muted); }
+  .status-detail {
+    margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--af-sky);
+    font: 600 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--af-navy); word-break: break-word;
+  }
+  .status-card .btn-row { margin-top: 32px; }
+  .checks { list-style: none; margin: 20px 0 0; padding: 0; border-radius: 12px; background: var(--af-ice); border: 1px solid var(--af-border); }
+  .checks li { display: flex; align-items: center; gap: 10px; padding: 11px 14px; font-size: 13px; }
+  .checks li + li { border-top: 1px solid var(--af-border); }
+  .checks .label { color: var(--af-muted); }
+  .checks .value { margin-left: auto; font-weight: 600; color: var(--af-navy); text-align: right; }
+  .checks .dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--af-subtle); }
+  .checks .ok .dot { background: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+  .checks .bad .dot { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18); }
+  .checks .bad .value { color: #b91c1c; }
+  .checks .info .dot { background: var(--af-accent); }
+  .footnote { margin: 18px 0 0; font-size: 12px; color: var(--af-subtle); }
+  .footnote a { color: var(--af-navy-mid); }
+  @media (max-width: 640px) { .status-card { padding: 24px; } .status-card h1 { font-size: 24px; } }
+`;
+
+/** ITSM-style status card on the dark brand gradient (health, 503, 404, 500). */
+export function renderStatusPage(options: StatusPageOptions): string {
+  const tone = options.tone ?? 'slate';
   const actions = options.actions?.length
     ? options.actions
-    : [
-        { label: 'API Home', href: '/', primary: true },
-        { label: 'Open Frontend', href: `${frontendUrl}/`, primary: false },
-      ];
+    : [{ label: 'API home', href: '/', primary: true }];
 
   const actionsHtml = actions
     .map(
       (a) =>
-        `<a class="btn ${a.primary ? 'btn-primary' : 'btn-secondary'}" href="${escapeHtml(a.href)}">${escapeHtml(a.label)}</a>`,
+        `<a class="btn ${a.primary ? 'btn-primary' : 'btn-outline'}" href="${escapeHtml(a.href)}">${escapeHtml(a.label)}</a>`,
     )
     .join('');
+
+  const checksHtml = options.checks?.length
+    ? `<ul class="checks">${options.checks
+        .map(
+          (c) =>
+            `<li class="${c.state ?? 'info'}"><span class="dot"></span><span class="label">${escapeHtml(c.label)}</span><span class="value">${escapeHtml(c.value)}</span></li>`,
+        )
+        .join('')}</ul>`
+    : '';
+
+  const icon =
+    options.icon ?? `<strong>${escapeHtml(options.code?.[0] ?? '!')}</strong>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${escapeHtml(options.title)} · Aceolution Finance API</title>
-  <link rel="icon" type="image/png" href="/Ace_logo_small.png" />
-  <link rel="apple-touch-icon" href="/Ace_logo_small.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation: none !important; transition: none !important; }
-    }
-    body {
-      min-height: 100vh;
-      font-family: "Plus Jakarta Sans", system-ui, sans-serif;
-      color: #0f172a;
-      background:
-        radial-gradient(ellipse 80% 60% at 20% -10%, rgba(24, 80, 168, 0.12), transparent 55%),
-        radial-gradient(ellipse 70% 50% at 90% 10%, rgba(32, 60, 98, 0.1), transparent 50%),
-        #e8edf4;
-      background-size: 140% 140%, 140% 140%, auto;
-      animation: bgDrift 18s ease-in-out infinite alternate;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem 1rem;
-    }
-    @keyframes bgDrift {
-      from { background-position: 0% 0%, 100% 0%, center; }
-      to { background-position: 20% 10%, 80% 15%, center; }
-    }
-    .card {
-      width: 100%;
-      max-width: 560px;
-      background: #ffffff;
-      border: 1.5px solid #64748b;
-      border-radius: 20px;
-      padding: 2rem;
-      box-shadow: 0 12px 40px rgba(32, 60, 98, 0.1);
-      position: relative;
-      overflow: hidden;
-      animation: cardIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
-      text-align: center;
-    }
-    @keyframes cardIn {
-      from { opacity: 0; transform: translateY(18px) scale(0.985); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
-    }
-    .card::before {
-      content: "";
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 3px;
-      background: linear-gradient(90deg, #203c62, #1850a8, #70bcfc, #1850a8, #203c62);
-      background-size: 200% 100%;
-      animation: barShine 4.5s linear infinite;
-    }
-    @keyframes barShine {
-      from { background-position: 0% 0; }
-      to { background-position: 200% 0; }
-    }
-    .logo {
-      width: 56px;
-      height: 56px;
-      border-radius: 14px;
-      background: #f1f5f9;
-      border: 1.5px solid #94a3b8;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      margin: 0 auto 1rem;
-      animation: logoPop 0.7s cubic-bezier(0.34, 1.4, 0.64, 1) 0.1s both;
-    }
-    @keyframes logoPop {
-      from { opacity: 0; transform: scale(0.7) rotate(-6deg); }
-      to { opacity: 1; transform: scale(1) rotate(0deg); }
-    }
-    .logo img { width: 42px; height: 42px; object-fit: contain; }
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.45rem;
-      margin: 0 0 1rem;
-      padding: 0.4rem 0.85rem;
-      border-radius: 999px;
-      font-size: 0.85rem;
-      font-weight: 700;
-      animation: fadeUp 0.55s ease 0.15s both;
-    }
-    .badge.ok { background: #d1fae5; border: 1.5px solid #34d399; color: #065f46; }
-    .badge.warn { background: #fef3c7; border: 1.5px solid #fcd34d; color: #92400e; }
-    .badge.error { background: #fee2e2; border: 1.5px solid #fca5a5; color: #991b1b; }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: currentColor;
-      animation: pulse 1.8s ease-in-out infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.55; transform: scale(0.85); }
-    }
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    h1 {
-      font-size: 1.55rem;
-      font-weight: 800;
-      letter-spacing: -0.02em;
-      color: #0f172a;
-      animation: fadeUp 0.55s ease 0.22s both;
-    }
-    h1 .accent { color: #1850a8; }
-    .message {
-      margin-top: 0.75rem;
-      color: #334155;
-      font-size: 0.98rem;
-      font-weight: 500;
-      line-height: 1.5;
-      animation: fadeUp 0.55s ease 0.3s both;
-    }
-    .detail {
-      margin-top: 0.85rem;
-      padding: 0.75rem 0.9rem;
-      border-radius: 10px;
-      background: #f1f5f9;
-      border: 1.5px solid #94a3b8;
-      font-family: "IBM Plex Mono", ui-monospace, monospace;
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: #1850a8;
-      word-break: break-word;
-      animation: fadeUp 0.55s ease 0.38s both;
-    }
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      justify-content: center;
-      margin-top: 1.5rem;
-      animation: fadeUp 0.55s ease 0.45s both;
-    }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0.8rem 1.15rem;
-      border-radius: 12px;
-      text-decoration: none;
-      font-size: 0.9375rem;
-      font-weight: 700;
-      transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
-    }
-    .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(32, 60, 98, 0.15); }
-    .btn-primary { background: #203c62; color: #ffffff; }
-    .btn-primary:hover { background: #2a4d78; }
-    .btn-secondary { background: #ffffff; color: #0f172a; border: 1.5px solid #64748b; }
-    .btn-secondary:hover { background: #f1f5f9; }
-    .footer {
-      margin-top: 1.35rem;
-      padding-top: 1rem;
-      border-top: 1.5px solid #94a3b8;
-      color: #64748b;
-      font-size: 0.8rem;
-      font-weight: 500;
-      animation: fadeUp 0.55s ease 0.52s both;
-    }
-    @media (max-width: 640px) {
-      body { padding: 1rem 0.75rem; align-items: flex-start; }
-      .card { padding: 1.35rem 1.1rem; border-radius: 16px; }
-      h1 { font-size: 1.3rem; }
-      .message { font-size: 0.92rem; }
-      .detail { font-size: 0.72rem; text-align: left; }
-      .actions { flex-direction: column; align-items: stretch; }
-      .btn { width: 100%; min-height: 44px; }
-    }
-  </style>
+  ${brandHead(`${options.title} · Aceolution Finance API`, STATUS_CSS)}
 </head>
-<body>
-  <main class="card">
-    <div class="logo">
-      <img src="/Ace_logo_small.png" alt="Aceolution" />
+<body class="bg-dark">
+  <main class="status-wrap">
+    <div class="status-card">
+      ${brandMark(true)}
+      <div class="tone tone-${tone}">${icon}</div>
+      ${options.code ? `<p class="status-code">${escapeHtml(options.code)}</p>` : ''}
+      ${options.meta ? `<p class="status-meta">${escapeHtml(options.meta)}</p>` : ''}
+      <h1>${escapeHtml(options.title)}</h1>
+      <p class="status-desc">${escapeHtml(options.description)}</p>
+      ${options.detail ? `<p class="status-detail">${escapeHtml(options.detail)}</p>` : ''}
+      ${checksHtml}
+      <div class="btn-row">${actionsHtml}</div>
+      ${options.footnote ? `<p class="footnote">${options.footnote}</p>` : ''}
     </div>
-    <div class="badge ${tone}"><span class="dot"></span> ${escapeHtml(options.badge)}</div>
-    <h1>${options.heading}</h1>
-    <p class="message">${escapeHtml(options.message)}</p>
-    ${options.detail ? `<p class="detail">${escapeHtml(options.detail)}</p>` : ''}
-    <div class="actions">${actionsHtml}</div>
-    <p class="footer">Aceolution Finance API</p>
   </main>
 </body>
 </html>`;
 }
 
-export function renderNotFoundPage(path: string): string {
-  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
-  return renderBrandPage({
-    title: '404 Not Found',
-    badge: '404 · Not Found',
-    badgeTone: 'warn',
-    heading: 'Page <span class="accent">not found</span>',
-    message: 'This API route does not exist. Check the path or go back to the API home.',
-    detail: `Cannot GET ${path}`,
+export function renderUnavailablePage(): string {
+  return renderStatusPage({
+    code: '503',
+    tone: 'rose',
+    title: 'Service unavailable',
+    description:
+      'The Aceolution Finance API or its database is temporarily down. Please wait a moment and try again.',
+    icon: ICONS.serverOff,
     actions: [
-      { label: 'API Home', href: '/', primary: true },
-      { label: 'Open Frontend', href: `${frontendUrl}/` },
-      { label: 'Dashboard Login', href: `${frontendUrl}/login/` },
+      { label: 'Check status', href: '/health' },
+      { label: 'Back to app', href: `${frontendUrl()}/`, primary: true },
     ],
   });
 }
 
-export function renderServerErrorPage(statusCode: number, message: string, detail?: string): string {
-  const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
-  const isDown = statusCode === 502 || statusCode === 503 || statusCode === 504;
-  return renderBrandPage({
-    title: isDown ? 'Service Unavailable' : `Error ${statusCode}`,
-    badge: isDown ? `${statusCode} · Service Unavailable` : `${statusCode} · Server Error`,
-    badgeTone: 'error',
-    heading: isDown
-      ? 'API temporarily <span class="accent">unavailable</span>'
-      : 'Something went <span class="accent">wrong</span>',
-    message: isDown
-      ? 'The Aceolution Finance API could not complete this request. Please try again in a moment.'
-      : message || 'An unexpected error occurred while processing your request.',
-    detail: detail || message,
+export function renderNotFoundPage(path: string): string {
+  return renderStatusPage({
+    code: '404',
+    tone: 'sky',
+    title: 'Page not found',
+    description:
+      'This API route does not exist. Check the path, or open the API docs for every route.',
+    detail: `Cannot GET ${path}`,
+    icon: ICONS.fileQuestion,
     actions: [
-      { label: 'API Home', href: '/', primary: true },
-      { label: 'Open Frontend', href: `${frontendUrl}/` },
-      { label: 'Try again', href: 'javascript:location.reload()' },
+      { label: 'API home', href: '/', primary: true },
+      { label: 'API docs', href: '/api/docs' },
+    ],
+  });
+}
+
+export function renderServerErrorPage(
+  statusCode: number,
+  message: string,
+  detail?: string,
+): string {
+  const isDown = statusCode === 502 || statusCode === 503 || statusCode === 504;
+  if (isDown) return renderUnavailablePage();
+  return renderStatusPage({
+    code: String(statusCode),
+    tone: statusCode >= 500 ? 'rose' : 'amber',
+    title: statusCode >= 500 ? 'Something went wrong' : 'Request failed',
+    description:
+      message || 'An unexpected error occurred while processing your request.',
+    detail,
+    icon: ICONS.alert,
+    actions: [
+      { label: 'API home', href: '/', primary: true },
+      { label: 'Check status', href: '/health' },
     ],
   });
 }

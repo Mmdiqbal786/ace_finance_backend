@@ -1,20 +1,84 @@
-import { Controller, Get, Header } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  Query,
+  Redirect,
+  Req,
+  Res,
+} from '@nestjs/common';
+import { InjectConnection } from '@nestjs/mongoose';
+import { ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
+import { Connection, ConnectionStates } from 'mongoose';
 import { AppService } from './app.service';
-import { renderBrandPage } from './common/api-brand-page';
+import { renderUnavailablePage } from './common/api-brand-page';
+import { wantsHtml } from './common/api-exception.filter';
+import { howWhy } from './common/swagger/api-guide';
+import { ApiSopResponses } from './common/swagger/api-sop';
+import { getOpenApiDocument } from './common/swagger/openapi-store';
+import { HEALTH_DATA } from './common/swagger/sop-data-samples';
 
+@ApiTags('Health')
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    @InjectConnection() private readonly connection: Connection,
+  ) {}
 
   @Get()
+  @ApiExcludeEndpoint()
   @Header('Content-Type', 'text/html; charset=utf-8')
   getHome(): string {
-    return this.appService.getWelcomePage();
+    return this.appService.getWelcomePage(getOpenApiDocument());
   }
 
-  /** Simple health check for uptime monitors (JSON). */
+  @Get('api')
+  @ApiExcludeEndpoint()
+  @Redirect('/', 302)
+  apiHome() {}
+
+  @Get('docs')
+  @ApiExcludeEndpoint()
+  @Redirect('/api/docs', 302)
+  docsShortcut() {}
+
+  @Get('api/docs')
+  @ApiExcludeEndpoint()
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store')
+  getSwaggerDocs(): string {
+    return this.appService.getSwaggerPage();
+  }
+
+  @Get('api/openapi')
+  @ApiExcludeEndpoint()
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  getOpenApiPage(@Req() req: Request): string {
+    const proto = req.get('x-forwarded-proto')?.split(',')[0] ?? req.protocol;
+    const baseUrl = `${proto}://${req.get('host') ?? 'localhost'}`;
+    return this.appService.getOpenApiPage(getOpenApiDocument(), baseUrl);
+  }
+
+  /** JSON for monitors / scripts; browsers opening the URL get the designed status page. */
   @Get('health')
-  getHealth() {
+  @ApiOperation({
+    summary: 'Health check',
+    description: howWhy({
+      why: 'Uptime monitors / Azure health probe.',
+      how: 'GET (public) → `status: "ok"` while the API process is up. Opening it in a browser shows the designed status page; add `?format=json` to force JSON.',
+    }),
+  })
+  @ApiSopResponses({ successData: HEALTH_DATA, auth: false })
+  getHealth(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Query('format') format?: string,
+  ) {
+    if (format !== 'json' && wantsHtml(req)) {
+      return this.sendStatusPage(res, '/health');
+    }
     return {
       status: 'ok',
       service: 'Aceolution Finance API',
@@ -22,27 +86,34 @@ export class AppController {
     };
   }
 
+  @Get('status')
+  @ApiExcludeEndpoint()
+  getStatusPage(@Res({ passthrough: true }) res: Response) {
+    return this.sendStatusPage(res, '/status');
+  }
+
+  private sendStatusPage(res: Response, refreshPath: string): string {
+    const state = this.connection.readyState;
+    const up = state === ConnectionStates.connected;
+    res
+      .status(up ? 200 : 503)
+      .type('html')
+      .setHeader('Cache-Control', 'no-store');
+    return this.appService.getStatusPage(
+      up,
+      ConnectionStates[state] ?? 'unknown',
+      refreshPath,
+    );
+  }
+
   /**
    * Branded “service unavailable” preview page (HTML).
    * Real full outages (process not running) cannot be served by Nest — use a reverse proxy for that.
    */
   @Get('status/unavailable')
+  @ApiExcludeEndpoint()
   @Header('Content-Type', 'text/html; charset=utf-8')
   getUnavailablePreview(): string {
-    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
-    return renderBrandPage({
-      title: 'Service Unavailable',
-      badge: '503 · Service Unavailable',
-      badgeTone: 'error',
-      heading: 'API temporarily <span class="accent">unavailable</span>',
-      message:
-        'This is the branded downtime page. If the API process is fully stopped, a reverse proxy (or the frontend) should show a similar screen.',
-      detail: 'GET /status/unavailable',
-      actions: [
-        { label: 'API Home', href: '/', primary: true },
-        { label: 'Open Frontend', href: `${frontendUrl}/` },
-        { label: 'Health check', href: '/health' },
-      ],
-    });
+    return renderUnavailablePage();
   }
 }

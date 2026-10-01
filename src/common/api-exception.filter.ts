@@ -9,7 +9,7 @@ import {
 import { Request, Response } from 'express';
 import { renderNotFoundPage, renderServerErrorPage } from './api-brand-page';
 
-function wantsHtml(req: Request): boolean {
+export function wantsHtml(req: Request): boolean {
   const accept = String(req.headers.accept || '');
   // API clients / fetch with JSON preference keep JSON responses
   if (accept.includes('application/json') && !accept.includes('text/html')) {
@@ -59,7 +59,8 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
     if (!wantsHtml(req)) {
       const body =
-        exception instanceof HttpException && typeof exception.getResponse() === 'object'
+        exception instanceof HttpException &&
+        typeof exception.getResponse() === 'object'
           ? exception.getResponse()
           : {
               statusCode: status,
@@ -73,7 +74,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
     if (status === HttpStatus.NOT_FOUND) {
-      res.status(status).send(renderNotFoundPage(req.originalUrl || req.url || '/'));
+      res
+        .status(status)
+        .send(renderNotFoundPage(req.originalUrl || req.url || '/'));
       return;
     }
 
