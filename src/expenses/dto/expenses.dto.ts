@@ -51,6 +51,18 @@ export class CreateExpenseDto {
   @ApiPropertyOptional({ example: '2026-09-30' })
   invoiceDate?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Set to true when user acknowledges a potential duplicate warning',
+  })
+  duplicateConfirmed?: boolean | string;
+
+  @ApiPropertyOptional({
+    description:
+      'Unique client session token to prevent double-click submissions',
+  })
+  idempotencyKey?: string;
+
   @ApiProperty({
     type: 'string',
     format: 'binary',

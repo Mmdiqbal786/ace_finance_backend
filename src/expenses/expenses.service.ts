@@ -1,7 +1,18 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Expense, ExpenseDocument } from './expense.schema';
+import {
+  Expense,
+  ExpenseDocument,
+  normalizeInvoiceNumber,
+  escapeRegex,
+} from './expense.schema';
 import { CategoriesService } from '../categories/categories.service';
 import { ProjectsService } from '../projects/projects.service';
 import { CountriesService } from '../countries/countries.service';
@@ -10,6 +21,10 @@ import { MailService, ExpenseMailSummary } from '../mail/mail.service';
 import { UsersService } from '../users/users.service';
 import { StorageService } from '../storage/storage.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  InvoiceParseService,
+  ParsedInvoiceData,
+} from './invoice-parse.service';
 
 export interface ActingUser {
   userId: string;
@@ -34,6 +49,10 @@ export interface CreateExpenseInput {
   invoiceDate?: string;
   /** Pre-generated id (so invoice filename can include it before save) */
   id?: string;
+  /** Whether requester confirmed a potential duplicate warning */
+  duplicateConfirmed?: boolean;
+  /** Unique client session token to prevent double-click submissions */
+  idempotencyKey?: string;
 }
 
 export interface InvoiceUploadMeta {
@@ -41,6 +60,71 @@ export interface InvoiceUploadMeta {
   originalName: string;
   mimeType: string;
   size: number;
+  fileHash?: string;
+  extractedInvoiceNumber?: string;
+  extractedInvoiceDate?: string;
+  extractedAmount?: number;
+  extractedCurrency?: string;
+  extractedVendor?: string;
+  parseMethod?: string;
+}
+
+export interface AssertNotDuplicateParams {
+  invoiceNumber?: string;
+  extractedInvoiceNumber?: string;
+  fileHash?: string;
+  project?: string;
+  originalAmount?: number;
+  currency?: string;
+  country?: string;
+  invoiceDate?: string;
+  excludeExpenseId?: string;
+}
+
+export interface CheckPotentialDuplicateParams {
+  project?: string;
+  category?: string;
+  originalAmount?: number;
+  currency?: string;
+  country?: string;
+  date?: string;
+  excludeExpenseId?: string;
+}
+
+export interface PotentialDuplicateResult {
+  isPotentialDuplicate: boolean;
+  conflict?: {
+    id: string;
+    project: string;
+    category: string;
+    amount: number;
+    currency?: string;
+    date: string;
+    requesterName: string;
+    submittedAt?: string;
+    reason: string;
+  };
+}
+
+export interface PreflightDuplicateCheckParams {
+  invoiceNumber?: string;
+  extractedInvoiceNumber?: string;
+  fileHash?: string;
+  project?: string;
+  category?: string;
+  amount?: number;
+  currency?: string;
+  country?: string;
+  date?: string;
+  excludeExpenseId?: string;
+}
+
+export interface PreflightDuplicateCheckResult {
+  isHardDuplicate: boolean;
+  hardDuplicateReason?: string;
+  isPotentialDuplicate: boolean;
+  potentialDuplicateReason?: string;
+  conflict?: any;
 }
 
 export type PaymentReceiptUploadMeta = InvoiceUploadMeta;
@@ -48,6 +132,10 @@ export type PaymentReceiptUploadMeta = InvoiceUploadMeta;
 @Injectable()
 export class ExpensesService {
   private readonly logger = new Logger(ExpensesService.name);
+  private readonly idempotencyMap = new Map<
+    string,
+    { expense: Expense; timestamp: number }
+  >();
 
   constructor(
     @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
@@ -59,6 +147,7 @@ export class ExpensesService {
     private readonly usersService: UsersService,
     private readonly storageService: StorageService,
     private readonly notificationsService: NotificationsService,
+    private readonly invoiceParseService: InvoiceParseService,
   ) {}
 
   /** e.g. EXP-1784269812102-4653 */
@@ -87,7 +176,9 @@ export class ExpensesService {
       mimeType: receipt.mimeType,
       size: receipt.size,
       uploadedAt: new Date().toISOString(),
-      uploadedBy: actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor',
+      uploadedBy: actingUser
+        ? `${actingUser.name} (${actingUser.email})`
+        : 'Processor',
       paymentAmount,
     });
   }
@@ -115,33 +206,47 @@ export class ExpensesService {
   }
 
   /** Email failures must never block the expense workflow. */
-  private notify(label: string, task: Promise<{ sent: boolean; reason?: string }>) {
+  private notify(
+    label: string,
+    task: Promise<{ sent: boolean; reason?: string }>,
+  ) {
     void task
       .then((result) => {
         if (!result.sent) {
-          this.logger.warn(`Workflow email (${label}) not sent: ${result.reason || 'unknown'}`);
+          this.logger.warn(
+            `Workflow email (${label}) not sent: ${result.reason || 'unknown'}`,
+          );
         }
       })
       .catch((err: any) => {
-        this.logger.error(`Workflow email (${label}) failed: ${err?.message || err}`);
+        this.logger.error(
+          `Workflow email (${label}) failed: ${err?.message || err}`,
+        );
       });
   }
 
-  private async notifyApproversOfSubmission(expense: Expense | ExpenseDocument) {
+  private async notifyApproversOfSubmission(
+    expense: Expense | ExpenseDocument,
+  ) {
     const summary = this.toMailSummary(expense);
     this.notify(
       `submitted→requester ${expense.id}`,
       this.mailService.sendExpenseSubmittedToRequester(summary),
     );
-    void this.notificationsService.enqueueForRequesterEmail(expense.requesterEmail, {
-      type: 'EXPENSE_SUBMITTED',
-      title: 'Expense submitted',
-      message: `Your expense ${expense.id} (${expense.project}) was submitted for approval.`,
-      expenseId: expense.id,
-      project: expense.project,
-    });
+    void this.notificationsService.enqueueForRequesterEmail(
+      expense.requesterEmail,
+      {
+        type: 'EXPENSE_SUBMITTED',
+        title: 'Expense submitted',
+        message: `Your expense ${expense.id} (${expense.project}) was submitted for approval.`,
+        expenseId: expense.id,
+        project: expense.project,
+      },
+    );
 
-    const approvers = await this.usersService.findActiveApproversForProject(expense.project);
+    const approvers = await this.usersService.findActiveApproversForProject(
+      expense.project,
+    );
     if (approvers.length === 0) {
       this.logger.warn(
         `No active APPROVER users assigned to project "${expense.project}" for expense ${expense.id}`,
@@ -170,11 +275,16 @@ export class ExpensesService {
     );
   }
 
-  private async notifyProcessorsOfApproval(expense: Expense | ExpenseDocument, notes?: string) {
+  private async notifyProcessorsOfApproval(
+    expense: Expense | ExpenseDocument,
+    notes?: string,
+  ) {
     const summary = this.toMailSummary(expense, notes);
     const processors = await this.usersService.findActiveByRole('PROCESSOR');
     if (processors.length === 0) {
-      this.logger.warn(`No active PROCESSOR users to notify for expense ${expense.id}`);
+      this.logger.warn(
+        `No active PROCESSOR users to notify for expense ${expense.id}`,
+      );
       return;
     }
     for (const processor of processors) {
@@ -199,6 +309,292 @@ export class ExpensesService {
     );
   }
 
+  /**
+   * Prevents duplicate expense requests caused by identical invoice files or invoice numbers.
+   * Excludes rejected requests (REJECTED_APPROVER, REJECTED_PROCESSOR) so legitimate resubmissions aren't locked out.
+   */
+  async assertNotDuplicate(params: AssertNotDuplicateParams): Promise<void> {
+    const nonDuplicateStatuses = ['REJECTED_APPROVER', 'REJECTED_PROCESSOR'];
+    const baseQuery: any = {
+      status: { $nin: nonDuplicateStatuses },
+    };
+    if (params.excludeExpenseId) {
+      baseQuery.id = { $ne: params.excludeExpenseId };
+    }
+
+    // 1. Check exact file content hash (SHA-256) across the entire platform
+    if (params.fileHash) {
+      const existingByHash = await this.expenseModel
+        .findOne({
+          ...baseQuery,
+          invoiceFileHash: params.fileHash,
+        })
+        .exec();
+
+      if (existingByHash) {
+        const dateStr = existingByHash.submittedAt
+          ? new Date(existingByHash.submittedAt).toLocaleDateString()
+          : 'earlier';
+        throw new BadRequestException(
+          `Duplicate invoice file detected: This exact invoice document was already submitted in request ${existingByHash.id} (${existingByHash.project}) by ${existingByHash.requesterName} on ${dateStr}.`,
+        );
+      }
+    }
+
+    // 2. Check normalized invoice number
+    const normalized = normalizeInvoiceNumber(params.invoiceNumber);
+    if (normalized) {
+      const escaped = escapeRegex(params.invoiceNumber!.trim());
+      const invoiceNumberFilter = {
+        $or: [
+          { invoiceNumberNormalized: normalized },
+          { invoiceNumber: { $regex: `^${escaped}$`, $options: 'i' } },
+        ],
+      };
+
+      // 2a. Check within the same project
+      if (params.project) {
+        const existingInProject = await this.expenseModel
+          .findOne({
+            ...baseQuery,
+            project: params.project,
+            ...invoiceNumberFilter,
+          })
+          .exec();
+
+        if (existingInProject) {
+          throw new BadRequestException(
+            `Duplicate invoice number detected: Invoice #${params.invoiceNumber!.trim()} has already been submitted under request ${existingInProject.id} (${existingInProject.project}) by ${existingInProject.requesterName}.`,
+          );
+        }
+      }
+
+      // 2b. Check across projects when date or amount matches
+      const crossProjectConditions: any[] = [];
+      if (params.invoiceDate) {
+        crossProjectConditions.push({ invoiceDate: params.invoiceDate });
+      }
+      let currency = params.currency?.trim().toUpperCase();
+      if (!currency && params.country && this.countriesService) {
+        try {
+          const country = await this.countriesService.findActiveByName(
+            params.country,
+          );
+          if (country?.currency) {
+            currency = country.currency.trim().toUpperCase();
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (
+        params.originalAmount &&
+        !Number.isNaN(Number(params.originalAmount))
+      ) {
+        const amountCondition: any = {
+          originalAmount: Number(params.originalAmount),
+        };
+        if (currency) {
+          amountCondition.currency = currency;
+        }
+        crossProjectConditions.push(amountCondition);
+      }
+
+      if (crossProjectConditions.length > 0) {
+        const existingCrossProject = await this.expenseModel
+          .findOne({
+            ...baseQuery,
+            ...invoiceNumberFilter,
+            $or: crossProjectConditions,
+          })
+          .exec();
+
+        if (existingCrossProject) {
+          throw new BadRequestException(
+            `Duplicate invoice detected: Invoice #${params.invoiceNumber!.trim()} with matching details was already submitted under request ${existingCrossProject.id} (${existingCrossProject.project}) by ${existingCrossProject.requesterName}.`,
+          );
+        }
+      }
+    }
+
+    // 3. Check extracted invoice number if parsed from document (Zero-AI PDF/OCR)
+    if (params.extractedInvoiceNumber) {
+      const extractedNorm = normalizeInvoiceNumber(
+        params.extractedInvoiceNumber,
+      );
+      if (extractedNorm) {
+        const query: any = {
+          ...baseQuery,
+          $or: [
+            { invoiceNumberNormalized: extractedNorm },
+            { extractedInvoiceNumber: params.extractedInvoiceNumber },
+          ],
+        };
+        if (params.project) {
+          query.project = params.project;
+        }
+        const existingExtracted = await this.expenseModel.findOne(query).exec();
+        if (existingExtracted) {
+          throw new BadRequestException(
+            `Duplicate invoice detected via document parse: Invoice #${params.extractedInvoiceNumber} was already submitted under request ${existingExtracted.id} (${existingExtracted.project}) by ${existingExtracted.requesterName}.`,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Checks for potential duplicate expenses based on the "Fuzzy Triple":
+   * Same Project + Same Category + Same Amount within a close date window (±1 day).
+   * This flags receipts without an invoice number (Uber, meals, coffee) for review.
+   */
+  async checkPotentialDuplicate(
+    params: CheckPotentialDuplicateParams,
+  ): Promise<PotentialDuplicateResult> {
+    if (
+      !params.project ||
+      !params.category ||
+      params.originalAmount === undefined ||
+      Number.isNaN(Number(params.originalAmount)) ||
+      !params.date
+    ) {
+      return { isPotentialDuplicate: false };
+    }
+
+    const nonDuplicateStatuses = ['REJECTED_APPROVER', 'REJECTED_PROCESSOR'];
+    const targetDate = new Date(params.date);
+    const dayBefore = new Date(targetDate.getTime() - 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split('T')[0];
+    const dayAfter = new Date(targetDate.getTime() + 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split('T')[0];
+
+    let currency = params.currency?.trim().toUpperCase();
+    if (!currency && params.country && this.countriesService) {
+      try {
+        const country = await this.countriesService.findActiveByName(
+          params.country,
+        );
+        if (country?.currency) {
+          currency = country.currency.trim().toUpperCase();
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const query: any = {
+      status: { $nin: nonDuplicateStatuses },
+      ...(params.excludeExpenseId
+        ? { id: { $ne: params.excludeExpenseId } }
+        : {}),
+      project: params.project,
+      category: params.category,
+      originalAmount: Number(params.originalAmount),
+      date: { $in: [dayBefore, params.date, dayAfter] },
+    };
+
+    if (currency) {
+      query.currency = currency;
+    }
+
+    const candidate = await this.expenseModel.findOne(query).exec();
+
+    if (!candidate) {
+      return { isPotentialDuplicate: false };
+    }
+
+    const reason = `An expense of ${candidate.currency || '$'}${candidate.originalAmount} under category "${candidate.category}" was already submitted for "${candidate.project}" on ${candidate.date} by ${candidate.requesterName} (Request ${candidate.id}).`;
+
+    return {
+      isPotentialDuplicate: true,
+      conflict: {
+        id: candidate.id,
+        project: candidate.project,
+        category: candidate.category,
+        amount: candidate.originalAmount || candidate.amount,
+        currency: candidate.currency,
+        date: candidate.date,
+        requesterName: candidate.requesterName,
+        submittedAt: candidate.submittedAt,
+        reason,
+      },
+    };
+  }
+
+  /**
+   * Combined pre-flight check endpoint for client-side live validation.
+   * Returns whether a submission is a hard block or a potential duplicate warning.
+   */
+  async preflightCheckDuplicate(
+    params: PreflightDuplicateCheckParams,
+  ): Promise<PreflightDuplicateCheckResult> {
+    // 1. Check Hard Duplicates (File Hash or Normalized Invoice #)
+    try {
+      await this.assertNotDuplicate({
+        invoiceNumber: params.invoiceNumber,
+        extractedInvoiceNumber: params.extractedInvoiceNumber,
+        fileHash: params.fileHash,
+        project: params.project,
+        originalAmount: params.amount,
+        invoiceDate: params.date,
+        excludeExpenseId: params.excludeExpenseId,
+      });
+    } catch (err: any) {
+      return {
+        isHardDuplicate: true,
+        hardDuplicateReason: err.message || 'Duplicate invoice detected.',
+        isPotentialDuplicate: false,
+      };
+    }
+
+    // 2. Check Potential Duplicates (Fuzzy Triple)
+    if (params.project && params.category && params.amount && params.date) {
+      const potential = await this.checkPotentialDuplicate({
+        project: params.project,
+        category: params.category,
+        originalAmount: params.amount,
+        currency: params.currency,
+        country: params.country,
+        date: params.date,
+        excludeExpenseId: params.excludeExpenseId,
+      });
+
+      if (potential.isPotentialDuplicate && potential.conflict) {
+        return {
+          isHardDuplicate: false,
+          isPotentialDuplicate: true,
+          potentialDuplicateReason: potential.conflict.reason,
+          conflict: potential.conflict,
+        };
+      }
+    }
+
+    return {
+      isHardDuplicate: false,
+      isPotentialDuplicate: false,
+    };
+  }
+
+  async parseInvoiceDocument(
+    buffer: Buffer,
+    originalName?: string,
+    mimeType?: string,
+  ): Promise<ParsedInvoiceData> {
+    if (
+      process.env.ENABLE_INVOICE_PARSE === 'false' ||
+      process.env.ENABLE_INVOICE_PARSE === '0'
+    ) {
+      return {
+        rawText: '',
+        parseMethod: 'none',
+        confidence: { invoiceNumber: 0, invoiceDate: 0, amount: 0 },
+      };
+    }
+    return this.invoiceParseService.parse(buffer, originalName, mimeType);
+  }
+
   async create(
     expenseData: CreateExpenseInput,
     invoice?: InvoiceUploadMeta,
@@ -207,11 +603,30 @@ export class ExpensesService {
       throw new BadRequestException('Invoice attachment is required.');
     }
 
-    const category = await this.categoriesService.assertActiveName(expenseData.category);
-    const project = await this.projectsService.assertActiveName(expenseData.project);
-    const country = await this.countriesService.assertActiveCountry(expenseData.country);
+    // Idempotency: Return existing expense on rapid double-submit with same idempotencyKey
+    if (expenseData.idempotencyKey) {
+      const cached = this.idempotencyMap.get(expenseData.idempotencyKey);
+      if (cached && Date.now() - cached.timestamp < 120000) {
+        this.logger.warn(
+          `Idempotent duplicate request caught for key ${expenseData.idempotencyKey}; returning existing expense ${cached.expense.id}`,
+        );
+        return cached.expense;
+      }
+    }
 
-    const requester = await this.usersService.findByEmail(expenseData.requesterEmail);
+    const category = await this.categoriesService.assertActiveName(
+      expenseData.category,
+    );
+    const project = await this.projectsService.assertActiveName(
+      expenseData.project,
+    );
+    const country = await this.countriesService.assertActiveCountry(
+      expenseData.country,
+    );
+
+    const requester = await this.usersService.findByEmail(
+      expenseData.requesterEmail,
+    );
     if (requester?.role === 'REQUESTER') {
       if (!this.usersService.userHasProjectAccess(requester, project)) {
         throw new ForbiddenException(
@@ -224,7 +639,9 @@ export class ExpensesService {
       throw new BadRequestException('Due date is required');
     }
     if (expenseData.dueDate < expenseData.date) {
-      throw new BadRequestException('Due date cannot be before the expense date');
+      throw new BadRequestException(
+        'Due date cannot be before the expense date',
+      );
     }
 
     const fx = await this.fxService.convertToUsd(
@@ -234,6 +651,37 @@ export class ExpensesService {
 
     const now = new Date().toISOString();
     const id = expenseData.id || this.generateExpenseId();
+
+    // 1. Hard block on exact file hash, matching invoice number, or extracted invoice number
+    await this.assertNotDuplicate({
+      invoiceNumber: expenseData.invoiceNumber,
+      extractedInvoiceNumber: invoice.extractedInvoiceNumber,
+      fileHash: invoice.fileHash,
+      project,
+      originalAmount: fx.originalAmount,
+      currency: fx.currency,
+      invoiceDate: expenseData.invoiceDate,
+      excludeExpenseId: id,
+    });
+
+    // 2. Soft warning on Fuzzy Triple (Amount + Date + Category in same Project + Same Currency)
+    const potential = await this.checkPotentialDuplicate({
+      project,
+      category,
+      originalAmount: fx.originalAmount,
+      currency: fx.currency,
+      country: country.name,
+      date: expenseData.date,
+      excludeExpenseId: id,
+    });
+
+    if (potential.isPotentialDuplicate && potential.conflict) {
+      if (!expenseData.duplicateConfirmed) {
+        throw new BadRequestException(
+          `POTENTIAL_DUPLICATE: ${potential.conflict.reason} If this is a separate and distinct expense, please confirm the duplicate checkbox before submitting.`,
+        );
+      }
+    }
 
     const newExpense = new this.expenseModel({
       requesterName: expenseData.requesterName,
@@ -259,18 +707,44 @@ export class ExpensesService {
       invoiceOriginalName: invoice.originalName,
       invoiceMimeType: invoice.mimeType,
       invoiceSize: invoice.size,
+      invoiceFileHash: invoice.fileHash,
+      invoiceNumberNormalized: normalizeInvoiceNumber(
+        expenseData.invoiceNumber,
+      ),
+      extractedInvoiceNumber: invoice.extractedInvoiceNumber,
+      extractedInvoiceDate: invoice.extractedInvoiceDate,
+      extractedAmount: invoice.extractedAmount,
+      extractedCurrency: invoice.extractedCurrency,
+      extractedVendor: invoice.extractedVendor,
+      parseMethod: invoice.parseMethod,
+      isPotentialDuplicate: potential.isPotentialDuplicate,
+      duplicateWarningReason: potential.conflict?.reason,
+      duplicateConfirmedByRequester: Boolean(expenseData.duplicateConfirmed),
+      idempotencyKey: expenseData.idempotencyKey,
       history: [
         {
           action: 'Submitted Request',
           timestamp: now,
           user: 'Public Requester',
-          notes: `Expense of ${fx.originalAmount} ${fx.currency} (≈ $${fx.amountUsd} USD @ ${fx.exchangeRate}) submitted by ${expenseData.requesterName}. Invoice: ${invoice.originalName}.`,
+          notes: `Expense of ${fx.originalAmount} ${fx.currency} (≈ $${fx.amountUsd} USD @ ${fx.exchangeRate}) submitted by ${expenseData.requesterName}. Invoice: ${invoice.originalName}.${potential.isPotentialDuplicate ? ' [Confirmed potential duplicate by requester]' : ''}`,
         },
       ],
     });
 
     try {
       const saved = await newExpense.save();
+      if (expenseData.idempotencyKey) {
+        this.idempotencyMap.set(expenseData.idempotencyKey, {
+          expense: saved,
+          timestamp: Date.now(),
+        });
+        if (this.idempotencyMap.size > 200) {
+          const threshold = Date.now() - 300000;
+          for (const [k, v] of this.idempotencyMap.entries()) {
+            if (v.timestamp < threshold) this.idempotencyMap.delete(k);
+          }
+        }
+      }
       await this.notifyApproversOfSubmission(saved);
       return saved;
     } catch (err) {
@@ -293,7 +767,9 @@ export class ExpensesService {
       : [];
     if (assigned.length === 0 && actingUser.userId) {
       const user = await this.usersService.findById(actingUser.userId);
-      assigned = Array.isArray(user?.assignedProjects) ? user!.assignedProjects! : [];
+      assigned = Array.isArray(user?.assignedProjects)
+        ? user.assignedProjects
+        : [];
     }
     if (assigned.length === 0) return [];
     const allowed = new Set(assigned);
@@ -306,7 +782,10 @@ export class ExpensesService {
   ): Promise<void> {
     if (!actingUser || actingUser.role !== 'APPROVER') return;
     const user = await this.usersService.findById(actingUser.userId);
-    if (!user || !this.usersService.userHasProjectAccess(user, expense.project)) {
+    if (
+      !user ||
+      !this.usersService.userHasProjectAccess(user, expense.project)
+    ) {
       throw new ForbiddenException(
         `You are not assigned to project "${expense.project}" and cannot act on this expense.`,
       );
@@ -329,16 +808,25 @@ export class ExpensesService {
     return expense;
   }
 
-  async approve(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
+  async approve(
+    id: string,
+    notes?: string,
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
     if (expense.status !== 'PENDING_APPROVER') {
-      throw new BadRequestException(`Cannot approve expense. Current status is ${expense.status}`);
+      throw new BadRequestException(
+        `Cannot approve expense. Current status is ${expense.status}`,
+      );
     }
     await this.assertApproverProjectAccess(expense, actingUser);
 
     const now = new Date().toISOString();
-    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Approver';
+    const userName = actingUser
+      ? `${actingUser.name} (${actingUser.email})`
+      : 'Approver';
     expense.status = 'APPROVED_APPROVER';
     expense.approverNotes = notes;
     expense.approvedAt = now;
@@ -353,16 +841,25 @@ export class ExpensesService {
     return saved;
   }
 
-  async reject(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
+  async reject(
+    id: string,
+    notes?: string,
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
     if (expense.status !== 'PENDING_APPROVER') {
-      throw new BadRequestException(`Cannot reject expense. Current status is ${expense.status}`);
+      throw new BadRequestException(
+        `Cannot reject expense. Current status is ${expense.status}`,
+      );
     }
     await this.assertApproverProjectAccess(expense, actingUser);
 
     const now = new Date().toISOString();
-    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Approver';
+    const userName = actingUser
+      ? `${actingUser.name} (${actingUser.email})`
+      : 'Approver';
     expense.status = 'REJECTED_APPROVER';
     expense.approverNotes = notes;
     expense.approvedAt = now;
@@ -375,15 +872,20 @@ export class ExpensesService {
     const saved = await expense.save();
     this.notify(
       `rejected-by-approver ${saved.id}`,
-      this.mailService.sendExpenseRejectedByApprover(this.toMailSummary(saved, notes)),
+      this.mailService.sendExpenseRejectedByApprover(
+        this.toMailSummary(saved, notes),
+      ),
     );
-    void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
-      type: 'EXPENSE_REJECTED_APPROVER',
-      title: 'Expense rejected',
-      message: `Your expense ${saved.id} (${saved.project}) was rejected by an approver.`,
-      expenseId: saved.id,
-      project: saved.project,
-    });
+    void this.notificationsService.enqueueForRequesterEmail(
+      saved.requesterEmail,
+      {
+        type: 'EXPENSE_REJECTED_APPROVER',
+        title: 'Expense rejected',
+        message: `Your expense ${saved.id} (${saved.project}) was rejected by an approver.`,
+        expenseId: saved.id,
+        project: saved.project,
+      },
+    );
     return saved;
   }
 
@@ -399,14 +901,19 @@ export class ExpensesService {
   ): Promise<Expense> {
     const trimmedNotes = String(notes || '').trim();
     if (!trimmedNotes) {
-      throw new BadRequestException('Notes are required when requesting changes.');
+      throw new BadRequestException(
+        'Notes are required when requesting changes.',
+      );
     }
     if (target !== 'requester' && target !== 'approver') {
-      throw new BadRequestException('Target must be "requester" or "approver".');
+      throw new BadRequestException(
+        'Target must be "requester" or "approver".',
+      );
     }
 
     const expense = await this.expenseModel.findOne({ id }).exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
 
     const role = actingUser?.role || '';
     const isApproverRole = role === 'APPROVER' || role === 'ADMIN';
@@ -414,15 +921,21 @@ export class ExpensesService {
 
     if (expense.status === 'PENDING_APPROVER') {
       if (!isApproverRole) {
-        throw new ForbiddenException('Only approvers can request changes on pending requests.');
+        throw new ForbiddenException(
+          'Only approvers can request changes on pending requests.',
+        );
       }
       await this.assertApproverProjectAccess(expense, actingUser);
       if (target !== 'requester') {
-        throw new BadRequestException('Approvers can only send requests back to the requester.');
+        throw new BadRequestException(
+          'Approvers can only send requests back to the requester.',
+        );
       }
     } else if (expense.status === 'APPROVED_APPROVER') {
       if (!isProcessorRole) {
-        throw new ForbiddenException('Only processors can request changes on approved requests.');
+        throw new ForbiddenException(
+          'Only processors can request changes on approved requests.',
+        );
       }
       if (Number(expense.paidAmount || 0) > 0) {
         throw new BadRequestException(
@@ -436,7 +949,9 @@ export class ExpensesService {
     }
 
     const now = new Date().toISOString();
-    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Staff';
+    const userName = actingUser
+      ? `${actingUser.name} (${actingUser.email})`
+      : 'Staff';
 
     if (target === 'approver') {
       expense.status = 'PENDING_APPROVER';
@@ -474,19 +989,27 @@ export class ExpensesService {
         this.toMailSummary(saved, trimmedNotes),
       ),
     );
-    void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
-      type: 'EXPENSE_CHANGES_REQUESTED',
-      title: 'Changes requested',
-      message: `Changes were requested on ${saved.id} (${saved.project}). Please update and resubmit.`,
-      expenseId: saved.id,
-      project: saved.project,
-    });
+    void this.notificationsService.enqueueForRequesterEmail(
+      saved.requesterEmail,
+      {
+        type: 'EXPENSE_CHANGES_REQUESTED',
+        title: 'Changes requested',
+        message: `Changes were requested on ${saved.id} (${saved.project}). Please update and resubmit.`,
+        expenseId: saved.id,
+        project: saved.project,
+      },
+    );
     return saved;
   }
 
-  private async notifyApproversOfReturn(expense: Expense | ExpenseDocument, notes: string) {
+  private async notifyApproversOfReturn(
+    expense: Expense | ExpenseDocument,
+    notes: string,
+  ) {
     const summary = this.toMailSummary(expense, notes);
-    const approvers = await this.usersService.findActiveApproversForProject(expense.project);
+    const approvers = await this.usersService.findActiveApproversForProject(
+      expense.project,
+    );
     if (approvers.length === 0) {
       this.logger.warn(
         `No active APPROVER users assigned to project "${expense.project}" for returned expense ${expense.id}`,
@@ -517,7 +1040,9 @@ export class ExpensesService {
 
   private assertPayableStatus(status: string, action: string) {
     if (status !== 'APPROVED_APPROVER' && status !== 'PARTIALLY_PAID') {
-      throw new BadRequestException(`Cannot ${action} expense. Current status is ${status}`);
+      throw new BadRequestException(
+        `Cannot ${action} expense. Current status is ${status}`,
+      );
     }
   }
 
@@ -533,7 +1058,8 @@ export class ExpensesService {
   /** Remaining USD still owed — used when naming full-pay receipts. */
   async getRemainingUsd(id: string): Promise<number> {
     const expense = await this.expenseModel.findOne({ id }).exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
     const remaining = this.remainingAmount(expense);
     return remaining > 0 ? remaining : this.roundMoney(Number(expense.amount));
   }
@@ -561,9 +1087,12 @@ export class ExpensesService {
     }
 
     const now = new Date().toISOString();
-    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
+    const userName = actingUser
+      ? `${actingUser.name} (${actingUser.email})`
+      : 'Processor';
     const remaining = this.remainingAmount(expense);
-    const payAmount = remaining > 0 ? remaining : this.roundMoney(Number(expense.amount));
+    const payAmount =
+      remaining > 0 ? remaining : this.roundMoney(Number(expense.amount));
     expense.paidAmount = this.roundMoney(Number(expense.amount));
     expense.status = 'PROCESSED';
     expense.processorNotes = notes;
@@ -574,7 +1103,8 @@ export class ExpensesService {
       timestamp: now,
       user: userName,
       notes:
-        (notes || (remaining > 0 ? 'Marked as fully paid.' : 'Marked as processed.')) +
+        (notes ||
+          (remaining > 0 ? 'Marked as fully paid.' : 'Marked as processed.')) +
         ` Receipt: ${receipt.originalName}.`,
       paymentAmount: payAmount,
       totalPaid: this.roundMoney(Number(expense.amount)),
@@ -583,15 +1113,20 @@ export class ExpensesService {
     const saved = await expense.save();
     this.notify(
       `fully-paid ${saved.id}`,
-      this.mailService.sendExpenseFullyPaidToRequester(this.toMailSummary(saved, notes)),
+      this.mailService.sendExpenseFullyPaidToRequester(
+        this.toMailSummary(saved, notes),
+      ),
     );
-    void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
-      type: 'EXPENSE_FULLY_PAID',
-      title: 'Expense paid',
-      message: `Your expense ${saved.id} (${saved.project}) has been fully paid.`,
-      expenseId: saved.id,
-      project: saved.project,
-    });
+    void this.notificationsService.enqueueForRequesterEmail(
+      saved.requesterEmail,
+      {
+        type: 'EXPENSE_FULLY_PAID',
+        title: 'Expense paid',
+        message: `Your expense ${saved.id} (${saved.project}) has been fully paid.`,
+        expenseId: saved.id,
+        project: saved.project,
+      },
+    );
     return saved;
   }
 
@@ -617,7 +1152,9 @@ export class ExpensesService {
 
       const amount = this.roundMoney(Number(paymentAmount));
       if (!Number.isFinite(amount) || amount <= 0) {
-        throw new BadRequestException('Payment amount must be greater than $0.00');
+        throw new BadRequestException(
+          'Payment amount must be greater than $0.00',
+        );
       }
 
       const remaining = this.remainingAmount(expense);
@@ -628,7 +1165,9 @@ export class ExpensesService {
       }
 
       const now = new Date().toISOString();
-      const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
+      const userName = actingUser
+        ? `${actingUser.name} (${actingUser.email})`
+        : 'Processor';
       const newPaid = this.roundMoney(Number(expense.paidAmount || 0) + amount);
       expense.paidAmount = newPaid;
       expense.processorNotes = notes ?? expense.processorNotes;
@@ -645,7 +1184,9 @@ export class ExpensesService {
           action: 'Processed & Paid',
           timestamp: now,
           user: userName,
-          notes: (notes || 'Final payment — request fully paid.') + ` Receipt: ${receipt.originalName}.`,
+          notes:
+            (notes || 'Final payment — request fully paid.') +
+            ` Receipt: ${receipt.originalName}.`,
           paymentAmount: amount,
           totalPaid: this.roundMoney(Number(expense.amount)),
           remaining: 0,
@@ -656,7 +1197,8 @@ export class ExpensesService {
           action: 'Partially Paid',
           timestamp: now,
           user: userName,
-          notes: (notes ? `${notes} ` : '') + `Receipt: ${receipt.originalName}.`,
+          notes:
+            (notes ? `${notes} ` : '') + `Receipt: ${receipt.originalName}.`,
           paymentAmount: amount,
           totalPaid: newPaid,
           remaining: newRemaining,
@@ -667,15 +1209,20 @@ export class ExpensesService {
       if (becameFullyPaid) {
         this.notify(
           `fully-paid (partial final) ${saved.id}`,
-          this.mailService.sendExpenseFullyPaidToRequester(this.toMailSummary(saved, notes)),
+          this.mailService.sendExpenseFullyPaidToRequester(
+            this.toMailSummary(saved, notes),
+          ),
         );
-        void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
-          type: 'EXPENSE_FULLY_PAID',
-          title: 'Expense paid',
-          message: `Your expense ${saved.id} (${saved.project}) has been fully paid.`,
-          expenseId: saved.id,
-          project: saved.project,
-        });
+        void this.notificationsService.enqueueForRequesterEmail(
+          saved.requesterEmail,
+          {
+            type: 'EXPENSE_FULLY_PAID',
+            title: 'Expense paid',
+            message: `Your expense ${saved.id} (${saved.project}) has been fully paid.`,
+            expenseId: saved.id,
+            project: saved.project,
+          },
+        );
       }
       return saved;
     } catch (err) {
@@ -684,13 +1231,20 @@ export class ExpensesService {
     }
   }
 
-  async processorReject(id: string, notes?: string, actingUser?: ActingUser): Promise<Expense> {
+  async processorReject(
+    id: string,
+    notes?: string,
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
     this.assertPayableStatus(expense.status, 'reject');
 
     const now = new Date().toISOString();
-    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Processor';
+    const userName = actingUser
+      ? `${actingUser.name} (${actingUser.email})`
+      : 'Processor';
     expense.status = 'REJECTED_PROCESSOR';
     expense.processorNotes = notes;
     expense.processedAt = now;
@@ -703,15 +1257,20 @@ export class ExpensesService {
     const saved = await expense.save();
     this.notify(
       `rejected-by-processor ${saved.id}`,
-      this.mailService.sendExpenseRejectedByProcessor(this.toMailSummary(saved, notes)),
+      this.mailService.sendExpenseRejectedByProcessor(
+        this.toMailSummary(saved, notes),
+      ),
     );
-    void this.notificationsService.enqueueForRequesterEmail(saved.requesterEmail, {
-      type: 'EXPENSE_REJECTED_PROCESSOR',
-      title: 'Payout rejected',
-      message: `Payment for ${saved.id} (${saved.project}) was rejected by finance.`,
-      expenseId: saved.id,
-      project: saved.project,
-    });
+    void this.notificationsService.enqueueForRequesterEmail(
+      saved.requesterEmail,
+      {
+        type: 'EXPENSE_REJECTED_PROCESSOR',
+        title: 'Payout rejected',
+        message: `Payment for ${saved.id} (${saved.project}) was rejected by finance.`,
+        expenseId: saved.id,
+        project: saved.project,
+      },
+    );
     return saved;
   }
 
@@ -721,7 +1280,9 @@ export class ExpensesService {
     action: string,
   ) {
     if (!actingUser) {
-      throw new ForbiddenException(`You must be signed in to ${action} this expense`);
+      throw new ForbiddenException(
+        `You must be signed in to ${action} this expense`,
+      );
     }
 
     // Approver / Processor send requests back via Request Changes — they do not edit the form
@@ -732,8 +1293,12 @@ export class ExpensesService {
     }
 
     if (actingUser.role === 'REQUESTER') {
-      if (expense.requesterEmail.toLowerCase() !== actingUser.email.toLowerCase()) {
-        throw new ForbiddenException(`You can only ${action} your own expense requests`);
+      if (
+        expense.requesterEmail.toLowerCase() !== actingUser.email.toLowerCase()
+      ) {
+        throw new ForbiddenException(
+          `You can only ${action} your own expense requests`,
+        );
       }
       if (action === 'edit') {
         // Edit only after Approver/Processor Request Changes
@@ -744,7 +1309,9 @@ export class ExpensesService {
         }
         return;
       }
-      throw new ForbiddenException(`Requesters cannot ${action} expense requests.`);
+      throw new ForbiddenException(
+        `Requesters cannot ${action} expense requests.`,
+      );
     }
 
     // ADMIN may correct details only when requester would be allowed to edit
@@ -766,7 +1333,9 @@ export class ExpensesService {
       return;
     }
 
-    throw new ForbiddenException(`You are not allowed to ${action} this expense`);
+    throw new ForbiddenException(
+      `You are not allowed to ${action} this expense`,
+    );
   }
 
   async update(
@@ -787,15 +1356,21 @@ export class ExpensesService {
     actingUser?: ActingUser,
   ): Promise<Expense> {
     const expense = await this.expenseModel.findOne({ id }).exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
     this.assertCanMutateExpenseDetails(expense, actingUser, 'edit');
 
     const wasChangesRequested = expense.status === 'CHANGES_REQUESTED';
     const now = new Date().toISOString();
     const changes: string[] = [];
 
-    if (updateData.requesterName && updateData.requesterName !== expense.requesterName) {
-      changes.push(`Name: "${expense.requesterName}" ➔ "${updateData.requesterName}"`);
+    if (
+      updateData.requesterName &&
+      updateData.requesterName !== expense.requesterName
+    ) {
+      changes.push(
+        `Name: "${expense.requesterName}" ➔ "${updateData.requesterName}"`,
+      );
       expense.requesterName = updateData.requesterName;
     }
     if (
@@ -803,16 +1378,22 @@ export class ExpensesService {
       updateData.requesterEmail &&
       updateData.requesterEmail !== expense.requesterEmail
     ) {
-      changes.push(`Email: "${expense.requesterEmail}" ➔ "${updateData.requesterEmail}"`);
+      changes.push(
+        `Email: "${expense.requesterEmail}" ➔ "${updateData.requesterEmail}"`,
+      );
       expense.requesterEmail = updateData.requesterEmail;
     }
     if (updateData.category && updateData.category !== expense.category) {
-      const category = await this.categoriesService.assertActiveName(updateData.category);
+      const category = await this.categoriesService.assertActiveName(
+        updateData.category,
+      );
       changes.push(`Category: "${expense.category}" ➔ "${category}"`);
       expense.category = category;
     }
     if (updateData.project && updateData.project !== expense.project) {
-      const project = await this.projectsService.assertActiveName(updateData.project);
+      const project = await this.projectsService.assertActiveName(
+        updateData.project,
+      );
       if (actingUser?.role === 'REQUESTER') {
         const user = await this.usersService.findById(actingUser.userId);
         if (!user || !this.usersService.userHasProjectAccess(user, project)) {
@@ -821,10 +1402,23 @@ export class ExpensesService {
           );
         }
       }
+      if (expense.invoiceNumber) {
+        await this.assertNotDuplicate({
+          invoiceNumber: expense.invoiceNumber,
+          fileHash: expense.invoiceFileHash,
+          project,
+          originalAmount: expense.originalAmount,
+          invoiceDate: expense.invoiceDate,
+          excludeExpenseId: expense.id,
+        });
+      }
       changes.push(`Project: "${expense.project || '—'}" ➔ "${project}"`);
       expense.project = project;
     }
-    if (updateData.description && updateData.description !== expense.description) {
+    if (
+      updateData.description &&
+      updateData.description !== expense.description
+    ) {
       changes.push(`Description updated`);
       expense.description = updateData.description;
     }
@@ -833,17 +1427,35 @@ export class ExpensesService {
       expense.date = updateData.date;
     }
     if (updateData.dueDate && updateData.dueDate !== expense.dueDate) {
-      changes.push(`Due date: "${expense.dueDate || '—'}" ➔ "${updateData.dueDate}"`);
+      changes.push(
+        `Due date: "${expense.dueDate || '—'}" ➔ "${updateData.dueDate}"`,
+      );
       expense.dueDate = updateData.dueDate;
     }
     if (updateData.invoiceNumber !== undefined) {
       const nextInvoiceNumber = String(updateData.invoiceNumber || '').trim();
       const prevInvoiceNumber = expense.invoiceNumber || '';
       if (nextInvoiceNumber !== prevInvoiceNumber) {
+        if (nextInvoiceNumber) {
+          await this.assertNotDuplicate({
+            invoiceNumber: nextInvoiceNumber,
+            fileHash: expense.invoiceFileHash,
+            project: updateData.project || expense.project,
+            originalAmount:
+              updateData.originalAmount !== undefined &&
+              !Number.isNaN(Number(updateData.originalAmount))
+                ? Number(updateData.originalAmount)
+                : expense.originalAmount,
+            invoiceDate: updateData.invoiceDate ?? expense.invoiceDate,
+            excludeExpenseId: expense.id,
+          });
+        }
         changes.push(
           `Invoice number: "${prevInvoiceNumber || '—'}" ➔ "${nextInvoiceNumber || '—'}"`,
         );
         expense.invoiceNumber = nextInvoiceNumber || undefined;
+        expense.invoiceNumberNormalized =
+          normalizeInvoiceNumber(nextInvoiceNumber);
       }
     }
     if (updateData.invoiceDate !== undefined) {
@@ -860,26 +1472,34 @@ export class ExpensesService {
     const effectiveDate = expense.date;
     const effectiveDueDate = expense.dueDate;
     if (effectiveDueDate && effectiveDate && effectiveDueDate < effectiveDate) {
-      throw new BadRequestException('Due date cannot be before the expense date');
+      throw new BadRequestException(
+        'Due date cannot be before the expense date',
+      );
     }
 
     const countryChanged =
-      updateData.country !== undefined && updateData.country !== expense.country;
+      updateData.country !== undefined &&
+      updateData.country !== expense.country;
     const amountChanged =
       updateData.originalAmount !== undefined &&
       !Number.isNaN(Number(updateData.originalAmount)) &&
-      Number(updateData.originalAmount) !== Number(expense.originalAmount || expense.amount);
+      Number(updateData.originalAmount) !==
+        Number(expense.originalAmount || expense.amount);
 
     if (countryChanged || amountChanged) {
       const countryName = updateData.country ?? expense.country;
       if (!countryName) {
         throw new BadRequestException('Country is required to update amount');
       }
-      const country = await this.countriesService.assertActiveCountry(countryName);
+      const country =
+        await this.countriesService.assertActiveCountry(countryName);
       const localAmount = Number(
         updateData.originalAmount ?? expense.originalAmount ?? expense.amount,
       );
-      const fx = await this.fxService.convertToUsd(country.currency, localAmount);
+      const fx = await this.fxService.convertToUsd(
+        country.currency,
+        localAmount,
+      );
       changes.push(
         `Amount: ${expense.originalAmount || expense.amount} ${expense.currency || 'USD'} ➔ ${fx.originalAmount} ${fx.currency} (≈ $${fx.amountUsd})`,
       );
@@ -891,7 +1511,9 @@ export class ExpensesService {
       expense.amount = fx.amountUsd;
     }
 
-    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Dashboard User';
+    const userName = actingUser
+      ? `${actingUser.name} (${actingUser.email})`
+      : 'Dashboard User';
 
     if (changes.length > 0) {
       expense.history.push({
@@ -939,6 +1561,12 @@ export class ExpensesService {
 
     try {
       this.assertCanMutateExpenseDetails(expense, actingUser, 'edit');
+      if (newInvoice.fileHash) {
+        await this.assertNotDuplicate({
+          fileHash: newInvoice.fileHash,
+          excludeExpenseId: id,
+        });
+      }
     } catch (err) {
       await this.removeInvoiceFile(newInvoice.fileName);
       throw err;
@@ -946,7 +1574,9 @@ export class ExpensesService {
 
     const previousInvoiceFileName = expense.invoiceFileName;
     const now = new Date().toISOString();
-    const userName = actingUser ? `${actingUser.name} (${actingUser.email})` : 'Dashboard User';
+    const userName = actingUser
+      ? `${actingUser.name} (${actingUser.email})`
+      : 'Dashboard User';
 
     expense.history.push({
       action: 'Request Details Modified',
@@ -959,10 +1589,16 @@ export class ExpensesService {
     expense.invoiceOriginalName = newInvoice.originalName;
     expense.invoiceMimeType = newInvoice.mimeType;
     expense.invoiceSize = newInvoice.size;
+    if (newInvoice.fileHash) {
+      expense.invoiceFileHash = newInvoice.fileHash;
+    }
 
     try {
       const saved = await expense.save();
-      if (previousInvoiceFileName && previousInvoiceFileName !== newInvoice.fileName) {
+      if (
+        previousInvoiceFileName &&
+        previousInvoiceFileName !== newInvoice.fileName
+      ) {
         await this.removeInvoiceFile(previousInvoiceFileName);
       }
       return saved;
@@ -974,14 +1610,18 @@ export class ExpensesService {
 
   async delete(id: string, actingUser?: ActingUser): Promise<void> {
     const expense = await this.expenseModel.findOne({ id }).exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
 
     if (actingUser?.role === 'REQUESTER') {
-      throw new ForbiddenException('Requesters cannot delete expense requests.');
+      throw new ForbiddenException(
+        'Requesters cannot delete expense requests.',
+      );
     }
 
     const result = await this.expenseModel.deleteOne({ id }).exec();
-    if (result.deletedCount === 0) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (result.deletedCount === 0)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
     await this.removeInvoiceFile(expense.invoiceFileName);
     for (const receipt of expense.paymentReceipts || []) {
       await this.removeReceiptFile(receipt.fileName);
@@ -994,13 +1634,17 @@ export class ExpensesService {
     mimeType: string;
   }> {
     const expense = await this.expenseModel.findOne({ id }).lean().exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
     if (!expense.invoiceFileName) {
       throw new NotFoundException('No invoice attached to this expense.');
     }
 
     try {
-      const file = await this.storageService.readAttachment('invoices', expense.invoiceFileName);
+      const file = await this.storageService.readAttachment(
+        'invoices',
+        expense.invoiceFileName,
+      );
       return {
         buffer: file.buffer,
         originalName: expense.invoiceOriginalName || expense.invoiceFileName,
@@ -1020,22 +1664,30 @@ export class ExpensesService {
     mimeType: string;
   }> {
     const expense = await this.expenseModel.findOne({ id }).lean().exec();
-    if (!expense) throw new NotFoundException(`Expense with ID ${id} not found`);
+    if (!expense)
+      throw new NotFoundException(`Expense with ID ${id} not found`);
 
-    const receipt = (expense.paymentReceipts || []).find((r) => r.fileName === fileName);
+    const receipt = (expense.paymentReceipts || []).find(
+      (r) => r.fileName === fileName,
+    );
     if (!receipt) {
       throw new NotFoundException('Payment receipt not found on this expense.');
     }
 
     try {
-      const file = await this.storageService.readAttachment('receipts', receipt.fileName);
+      const file = await this.storageService.readAttachment(
+        'receipts',
+        receipt.fileName,
+      );
       return {
         buffer: file.buffer,
         originalName: receipt.originalName || receipt.fileName,
         mimeType: receipt.mimeType || 'application/octet-stream',
       };
     } catch {
-      throw new NotFoundException('Payment receipt file is missing in storage.');
+      throw new NotFoundException(
+        'Payment receipt file is missing in storage.',
+      );
     }
   }
 
@@ -1045,20 +1697,30 @@ export class ExpensesService {
     const expenses = actingUser
       ? await this.findAllForUser(actingUser)
       : await this.findAll();
-    let totalRequested = 0, totalProcessed = 0, pendingApproval = 0;
-    let pendingProcessing = 0, processed = 0, rejected = 0;
+    let totalRequested = 0,
+      totalProcessed = 0,
+      pendingApproval = 0;
+    let pendingProcessing = 0,
+      processed = 0,
+      rejected = 0;
     const byCategory: { [key: string]: number } = {};
 
     expenses.forEach((e) => {
       totalRequested += e.amount;
       const paid = Number(e.paidAmount || 0);
       if (e.status === 'PENDING_APPROVER') pendingApproval++;
-      else if (e.status === 'APPROVED_APPROVER' || e.status === 'PARTIALLY_PAID') {
+      else if (
+        e.status === 'APPROVED_APPROVER' ||
+        e.status === 'PARTIALLY_PAID'
+      ) {
         pendingProcessing++;
       } else if (e.status === 'PROCESSED') {
         processed++;
         totalProcessed += paid > 0 ? paid : e.amount;
-      } else if (e.status === 'REJECTED_APPROVER' || e.status === 'REJECTED_PROCESSOR') {
+      } else if (
+        e.status === 'REJECTED_APPROVER' ||
+        e.status === 'REJECTED_PROCESSOR'
+      ) {
         rejected++;
       }
       if (e.status === 'PARTIALLY_PAID' && paid > 0) {
@@ -1071,11 +1733,20 @@ export class ExpensesService {
     const allLogs: any[] = [];
     expenses.forEach((e) => {
       e.history.forEach((h) => {
-        allLogs.push({ expenseId: e.id, requesterName: e.requesterName, action: h.action, timestamp: h.timestamp, user: h.user });
+        allLogs.push({
+          expenseId: e.id,
+          requesterName: e.requesterName,
+          action: h.action,
+          timestamp: h.timestamp,
+          user: h.user,
+        });
       });
     });
 
-    allLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    allLogs.sort(
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
 
     return {
       totalRequests: expenses.length,
@@ -1123,9 +1794,7 @@ export class ExpensesService {
       })
       .exec();
 
-    const candidates = pending.filter(
-      (e) => e[reminderField] !== dueDateStr,
-    );
+    const candidates = pending.filter((e) => e[reminderField] !== dueDateStr);
 
     if (candidates.length === 0) {
       return { checked: pending.length, reminded: 0 };
@@ -1217,7 +1886,9 @@ export class ExpensesService {
 
     const processors = await this.usersService.findActiveByRole('PROCESSOR');
     if (processors.length === 0) {
-      this.logger.warn('Processor due-soon reminder skipped: no active PROCESSOR users.');
+      this.logger.warn(
+        'Processor due-soon reminder skipped: no active PROCESSOR users.',
+      );
       return { checked: candidates.length, reminded: 0 };
     }
 

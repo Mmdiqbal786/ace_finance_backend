@@ -6,14 +6,14 @@ export type CountryDocument = Country & Document;
 @Schema({ collection: 'countries', timestamps: true })
 export class Country {
   @Prop({ required: true, unique: true, trim: true })
-  name: string;
+  name!: string;
 
   /** ISO-style currency code, e.g. USD, INR, AED */
   @Prop({ required: true, trim: true, uppercase: true })
-  currency: string;
+  currency!: string;
 
   @Prop({ default: true })
-  isActive: boolean;
+  isActive!: boolean;
 }
 
 export const CountrySchema = SchemaFactory.createForClass(Country);

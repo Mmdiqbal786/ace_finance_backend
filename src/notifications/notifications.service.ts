@@ -110,7 +110,9 @@ export class NotificationsService {
   }
 
   async unreadCount(userId: string): Promise<number> {
-    return this.notificationModel.countDocuments({ userId, isRead: false }).exec();
+    return this.notificationModel
+      .countDocuments({ userId, isRead: false })
+      .exec();
   }
 
   async markRead(userId: string, notificationId: string) {

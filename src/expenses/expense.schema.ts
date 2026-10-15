@@ -6,13 +6,13 @@ export type ExpenseDocument = Expense & Document;
 @Schema({ _id: false })
 export class HistoryLog {
   @Prop({ required: true })
-  action: string;
+  action!: string;
 
   @Prop({ required: true })
-  timestamp: string;
+  timestamp!: string;
 
   @Prop({ required: true })
-  user: string;
+  user!: string;
 
   @Prop()
   notes?: string;
@@ -35,10 +35,10 @@ const HistoryLogSchema = SchemaFactory.createForClass(HistoryLog);
 @Schema({ _id: false })
 export class PaymentReceipt {
   @Prop({ required: true })
-  fileName: string;
+  fileName!: string;
 
   @Prop({ required: true })
-  originalName: string;
+  originalName!: string;
 
   @Prop()
   mimeType?: string;
@@ -47,7 +47,7 @@ export class PaymentReceipt {
   size?: number;
 
   @Prop({ required: true })
-  uploadedAt: string;
+  uploadedAt!: string;
 
   @Prop()
   uploadedBy?: string;
@@ -61,16 +61,16 @@ const PaymentReceiptSchema = SchemaFactory.createForClass(PaymentReceipt);
 @Schema({ collection: 'expenses' })
 export class Expense {
   @Prop({ required: true, unique: true })
-  id: string;
+  id!: string;
 
   @Prop({ required: true })
-  requesterName: string;
+  requesterName!: string;
 
   @Prop({ required: true })
-  requesterEmail: string;
+  requesterEmail!: string;
 
   @Prop({ required: true })
-  amount: number;
+  amount!: number;
 
   /** Cumulative USD amount paid so far (partial payouts) */
   @Prop({ default: 0 })
@@ -95,19 +95,19 @@ export class Expense {
   exchangeRateDate?: string;
 
   @Prop({ required: true })
-  category: string;
+  category!: string;
 
   @Prop({ required: true })
-  project: string;
+  project!: string;
 
   @Prop({ required: true })
-  description: string;
+  description!: string;
 
   @Prop({ required: true })
-  date: string;
+  date!: string;
 
   @Prop({ required: true })
-  dueDate: string;
+  dueDate!: string;
 
   @Prop({ trim: true, maxlength: 100 })
   invoiceNumber?: string;
@@ -116,10 +116,10 @@ export class Expense {
   invoiceDate?: string;
 
   @Prop({ required: true, default: 'PENDING_APPROVER' })
-  status: string;
+  status!: string;
 
   @Prop({ required: true })
-  submittedAt: string;
+  submittedAt!: string;
 
   @Prop()
   approverNotes?: string;
@@ -172,12 +172,87 @@ export class Expense {
   @Prop()
   invoiceSize?: number;
 
+  /** SHA-256 fingerprint of the uploaded invoice file to detect exact duplicate documents */
+  @Prop({ index: true })
+  invoiceFileHash?: string;
+
+  /** Normalized alphanumeric representation of invoiceNumber for duplicate checking */
+  @Prop({ index: true, trim: true })
+  invoiceNumberNormalized?: string;
+
   /** Payment receipts attached by processor (full or partial payouts) */
   @Prop({ type: [PaymentReceiptSchema], default: [] })
   paymentReceipts?: PaymentReceipt[];
 
+  /** Flagged when amount, category, date, and project closely match an existing expense */
+  @Prop({ default: false, index: true })
+  isPotentialDuplicate?: boolean;
+
+  /** Explanatory note detailing the potential duplicate match for approvers and processors */
+  @Prop()
+  duplicateWarningReason?: string;
+
+  /** Whether the submitter confirmed that this is a separate, distinct expense */
+  @Prop({ default: false })
+  duplicateConfirmedByRequester?: boolean;
+
+  /** Submission token to prevent rapid double-click duplicate creation */
+  @Prop({ index: true })
+  idempotencyKey?: string;
+
+  /** Document parsed values via local non-AI OCR / PDF-parse */
+  @Prop({ index: true, trim: true })
+  extractedInvoiceNumber?: string;
+
+  @Prop()
+  extractedInvoiceDate?: string;
+
+  @Prop()
+  extractedAmount?: number;
+
+  @Prop()
+  extractedCurrency?: string;
+
+  @Prop()
+  extractedVendor?: string;
+
+  @Prop()
+  parseMethod?: string;
+
   @Prop({ type: [HistoryLogSchema], default: [] })
-  history: HistoryLog[];
+  history!: HistoryLog[];
 }
 
 export const ExpenseSchema = SchemaFactory.createForClass(Expense);
+
+ExpenseSchema.index({ invoiceNumberNormalized: 1, project: 1 });
+ExpenseSchema.index({ invoiceFileHash: 1 });
+ExpenseSchema.index({ extractedInvoiceNumber: 1, project: 1 });
+
+const IGNORED_INVOICE_NUMBERS = new Set([
+  'na',
+  'none',
+  'nil',
+  'null',
+  '0',
+  'notapplicable',
+  'notavailable',
+  'pending',
+]);
+
+/**
+ * Normalizes an invoice number for duplicate checking (strips symbols/spaces, lowercases).
+ * Returns undefined if input is missing, too short (< 2 chars), or a generic placeholder (e.g. "N/A", "None").
+ */
+export function normalizeInvoiceNumber(val?: string): string | undefined {
+  if (!val) return undefined;
+  const cleaned = val.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  if (cleaned.length < 2 || IGNORED_INVOICE_NUMBERS.has(cleaned)) {
+    return undefined;
+  }
+  return cleaned;
+}
+
+export function escapeRegex(text: string): string {
+  return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+}

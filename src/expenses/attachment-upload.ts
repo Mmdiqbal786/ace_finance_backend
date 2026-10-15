@@ -28,7 +28,10 @@ export function attachmentMulterOptions(kind: 'invoice' | 'receipt') {
     limits: { fileSize: ATTACHMENT_MAX_BYTES },
     fileFilter: (_req: any, file: Express.Multer.File, cb: any) => {
       const ext = extname(file.originalname || '').toLowerCase();
-      if (!ALLOWED_ATTACHMENT_MIME.has(file.mimetype) || !ALLOWED_ATTACHMENT_EXT.has(ext)) {
+      if (
+        !ALLOWED_ATTACHMENT_MIME.has(file.mimetype) ||
+        !ALLOWED_ATTACHMENT_EXT.has(ext)
+      ) {
         return cb(
           new BadRequestException(
             `${kind === 'invoice' ? 'Invoice' : 'Payment receipt'} must be a PDF or image (JPG, PNG, WEBP, GIF), max 5 MB.`,

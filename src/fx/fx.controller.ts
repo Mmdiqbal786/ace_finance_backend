@@ -13,13 +13,15 @@ export class FxController {
   /** Public — preview local → USD conversion using today's rate */
   @Get('convert')
   @ApiOperation({
-    summary: 'Convert a local amount to USD (public)',
+    summary: 'Convert an amount between currencies or to USD (public)',
     description: howWhy({
-      why: 'Show "≈ $15.63 USD" under the amount field before submitting.',
-      how: "GET `?currency=INR&amount=1500` → today's rate. The same conversion is stored on submit.",
+      why: 'Show converted local amounts or "≈ $15.63 USD" preview under the amount field.',
+      how: "GET `?from=USD&to=INR&amount=184.2` or GET `?currency=INR&amount=1500`.",
     }),
   })
-  @ApiQuery({ name: 'currency', required: true, example: 'INR' })
+  @ApiQuery({ name: 'currency', required: false, example: 'INR' })
+  @ApiQuery({ name: 'from', required: false, example: 'USD' })
+  @ApiQuery({ name: 'to', required: false, example: 'INR' })
   @ApiQuery({ name: 'amount', required: true, example: 1500 })
   @ApiSopResponses({
     successData: FX_DATA,
@@ -27,13 +29,19 @@ export class FxController {
     badRequest: 'amount query must be a number',
   })
   async convert(
-    @Query('currency') currency: string,
-    @Query('amount') amountRaw: string,
+    @Query('currency') currency?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('amount') amountRaw?: string,
   ) {
     const amount = Number(amountRaw);
     if (!Number.isFinite(amount)) {
       throw new BadRequestException('amount query must be a number');
     }
-    return this.fxService.convertToUsd(currency, amount);
+    if (from && to) {
+      return this.fxService.convertBetween(from, to, amount);
+    }
+    const curr = currency || from || 'USD';
+    return this.fxService.convertToUsd(curr, amount);
   }
 }

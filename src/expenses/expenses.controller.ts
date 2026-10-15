@@ -28,6 +28,7 @@ import {
 } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { Readable } from 'stream';
+import * as crypto from 'crypto';
 import { ExpensesService } from './expenses.service';
 import { attachmentMulterOptions } from './attachment-upload';
 import { StorageService } from '../storage/storage.service';
@@ -105,6 +106,47 @@ export class ExpensesController {
       throw new BadRequestException('Invoice attachment is required.');
     }
 
+    const fileHash = crypto
+      .createHash('sha256')
+      .update(file.buffer)
+      .digest('hex');
+
+    const parsedDoc = await this.expensesService.parseInvoiceDocument(
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
+
+    // Pre-flight duplicate check: abort before uploading to blob storage if already submitted
+    await this.expensesService.assertNotDuplicate({
+      invoiceNumber: body.invoiceNumber?.trim() || undefined,
+      extractedInvoiceNumber: parsedDoc.invoiceNumber,
+      fileHash,
+      project: body.project,
+      originalAmount: Number(body.originalAmount),
+      country: body.country,
+      invoiceDate: body.invoiceDate || undefined,
+    });
+
+    const duplicateConfirmed = Boolean(
+      body.duplicateConfirmed === 'true' || body.duplicateConfirmed === true,
+    );
+
+    if (!duplicateConfirmed) {
+      const potential = await this.expensesService.checkPotentialDuplicate({
+        project: body.project,
+        category: body.category,
+        originalAmount: Number(body.originalAmount),
+        country: body.country,
+        date: body.date,
+      });
+      if (potential.isPotentialDuplicate && potential.conflict) {
+        throw new BadRequestException(
+          `POTENTIAL_DUPLICATE: ${potential.conflict.reason} If this is a separate and distinct expense, please confirm the duplicate checkbox before submitting.`,
+        );
+      }
+    }
+
     const expenseId = this.expensesService.generateExpenseId();
     const stored = await this.storageService.saveAttachment('invoices', file, {
       expenseId,
@@ -125,14 +167,84 @@ export class ExpensesController {
         invoiceNumber: body.invoiceNumber?.trim() || undefined,
         invoiceDate: body.invoiceDate || undefined,
         id: expenseId,
+        duplicateConfirmed,
+        idempotencyKey: body.idempotencyKey,
       },
       {
         fileName: stored.fileName,
         originalName: stored.originalName,
         mimeType: stored.mimeType,
         size: stored.size,
+        fileHash,
+        extractedInvoiceNumber: parsedDoc.invoiceNumber,
+        extractedInvoiceDate: parsedDoc.invoiceDate,
+        extractedAmount: parsedDoc.amount,
+        extractedCurrency: parsedDoc.currency,
+        extractedVendor: parsedDoc.vendor,
+        parseMethod: parsedDoc.parseMethod,
       },
     );
+  }
+
+  @Post('parse-invoice')
+  @UseInterceptors(FileInterceptor('file', attachmentMulterOptions('invoice')))
+  @ApiOperation({
+    summary: 'Parse invoice document via local OCR / PDF Parse (Zero AI)',
+    description:
+      'Extracts invoice number, date, amount, currency, and vendor directly from the uploaded PDF or image using local pdf-parse and Tesseract OCR.',
+  })
+  @ApiConsumes('multipart/form-data')
+  async parseInvoice(@UploadedFile() file: Express.Multer.File | undefined) {
+    if (
+      process.env.ENABLE_INVOICE_PARSE === 'false' ||
+      process.env.ENABLE_INVOICE_PARSE === '0'
+    ) {
+      return {
+        success: false,
+        message: 'Invoice parsing is disabled in environment configuration.',
+      };
+    }
+    if (!file) {
+      throw new BadRequestException('File is required for parsing.');
+    }
+    const result = await this.expensesService.parseInvoiceDocument(
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
+    return {
+      success: true,
+      data: result,
+    };
+  }
+
+  @Get('check-duplicate')
+  @ApiOperation({
+    summary: 'Pre-flight check for duplicate and potential duplicate expenses',
+  })
+  async checkDuplicate(
+    @Query('invoiceNumber') invoiceNumber?: string,
+    @Query('fileHash') fileHash?: string,
+    @Query('project') project?: string,
+    @Query('category') category?: string,
+    @Query('amount') amount?: string,
+    @Query('currency') currency?: string,
+    @Query('country') country?: string,
+    @Query('date') date?: string,
+    @Query('excludeExpenseId') excludeExpenseId?: string,
+  ) {
+    return this.expensesService.preflightCheckDuplicate({
+      invoiceNumber: invoiceNumber?.trim() || undefined,
+      fileHash: fileHash?.trim() || undefined,
+      project: project?.trim() || undefined,
+      category: category?.trim() || undefined,
+      amount:
+        amount && !Number.isNaN(Number(amount)) ? Number(amount) : undefined,
+      currency: currency?.trim() || undefined,
+      country: country?.trim() || undefined,
+      date: date?.trim() || undefined,
+      excludeExpenseId: excludeExpenseId?.trim() || undefined,
+    });
   }
 
   // Protected — role-aware list (Approvers only see assigned projects)
@@ -579,6 +691,18 @@ export class ExpensesController {
     if (!file) {
       throw new BadRequestException('Invoice attachment is required.');
     }
+
+    const fileHash = crypto
+      .createHash('sha256')
+      .update(file.buffer)
+      .digest('hex');
+
+    // Pre-flight duplicate check: abort before uploading if file is already submitted elsewhere
+    await this.expensesService.assertNotDuplicate({
+      fileHash,
+      excludeExpenseId: id,
+    });
+
     const stored = await this.storageService.saveAttachment('invoices', file, {
       expenseId: id,
       kind: 'invoice',
@@ -590,6 +714,7 @@ export class ExpensesController {
         originalName: stored.originalName,
         mimeType: stored.mimeType,
         size: stored.size,
+        fileHash,
       },
       req.user,
     );

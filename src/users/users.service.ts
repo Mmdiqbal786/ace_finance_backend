@@ -57,9 +57,7 @@ export class UsersService implements OnModuleInit {
       await this.ensureDemoScopedUsers();
       await this.rewriteLegacyProcessorHistory();
     } catch (err: any) {
-      this.logger.warn(
-        `Demo user seed skipped: ${err?.message || err}`,
-      );
+      this.logger.warn(`Demo user seed skipped: ${err?.message || err}`);
     }
   }
 
@@ -79,9 +77,7 @@ export class UsersService implements OnModuleInit {
     return this.userModel.findById(id).exec();
   }
 
-  async findActiveByRole(
-    role: UserRole,
-  ): Promise<
+  async findActiveByRole(role: UserRole): Promise<
     Array<{
       id: string;
       name: string;
@@ -91,7 +87,10 @@ export class UsersService implements OnModuleInit {
     }>
   > {
     const users = await this.userModel
-      .find({ role, isActive: true }, { name: 1, email: 1, role: 1, assignedProjects: 1 })
+      .find(
+        { role, isActive: true },
+        { name: 1, email: 1, role: 1, assignedProjects: 1 },
+      )
       .lean()
       .exec();
     return users.map((u) => ({
@@ -99,7 +98,9 @@ export class UsersService implements OnModuleInit {
       name: u.name,
       email: u.email,
       role: u.role,
-      assignedProjects: Array.isArray(u.assignedProjects) ? u.assignedProjects : [],
+      assignedProjects: Array.isArray(u.assignedProjects)
+        ? u.assignedProjects
+        : [],
     }));
   }
 
@@ -157,7 +158,9 @@ export class UsersService implements OnModuleInit {
   ): boolean {
     if (user.role === 'ADMIN' || user.role === 'PROCESSOR') return true;
     if (!roleNeedsProjects(user.role as UserRole)) return true;
-    const assigned = Array.isArray(user.assignedProjects) ? user.assignedProjects : [];
+    const assigned = Array.isArray(user.assignedProjects)
+      ? user.assignedProjects
+      : [];
     return assigned.includes((projectName || '').trim());
   }
 
@@ -176,12 +179,17 @@ export class UsersService implements OnModuleInit {
       name: user.name,
       email: user.email,
       role: user.role,
-      assignedProjects: Array.isArray(user.assignedProjects) ? user.assignedProjects : [],
+      assignedProjects: Array.isArray(user.assignedProjects)
+        ? user.assignedProjects
+        : [],
       isDemo: Boolean(user.isDemo),
     };
   }
 
-  async updateOwnProfile(userId: string, name: string): Promise<{
+  async updateOwnProfile(
+    userId: string,
+    name: string,
+  ): Promise<{
     id: string;
     name: string;
     email: string;
@@ -207,7 +215,9 @@ export class UsersService implements OnModuleInit {
       name: user.name,
       email: user.email,
       role: user.role,
-      assignedProjects: Array.isArray(user.assignedProjects) ? user.assignedProjects : [],
+      assignedProjects: Array.isArray(user.assignedProjects)
+        ? user.assignedProjects
+        : [],
     };
   }
 
@@ -242,7 +252,9 @@ export class UsersService implements OnModuleInit {
   }): Promise<any> {
     const existing = await this.findByEmail(data.email);
     if (existing) {
-      throw new ConflictException(`User with email ${data.email} already exists`);
+      throw new ConflictException(
+        `User with email ${data.email} already exists`,
+      );
     }
 
     const assignedProjects = await this.assertAssignedProjectsValid(
@@ -310,7 +322,11 @@ export class UsersService implements OnModuleInit {
     }
 
     const user = await this.userModel
-      .findByIdAndUpdate(id, { $set }, { new: true, projection: { password: 0 } })
+      .findByIdAndUpdate(
+        id,
+        { $set },
+        { new: true, projection: { password: 0 } },
+      )
       .lean()
       .exec();
     if (!user) throw new NotFoundException(`User ${id} not found`);
@@ -323,7 +339,9 @@ export class UsersService implements OnModuleInit {
     opts?: { requireChangeOnNextLogin?: boolean },
   ): Promise<void> {
     const hashed = await bcrypt.hash(newPassword, 10);
-    const $set: { password: string; mustChangePassword?: boolean } = { password: hashed };
+    const $set: { password: string; mustChangePassword?: boolean } = {
+      password: hashed,
+    };
     if (opts?.requireChangeOnNextLogin) {
       $set.mustChangePassword = true;
     } else if (opts?.requireChangeOnNextLogin === false) {
@@ -333,14 +351,18 @@ export class UsersService implements OnModuleInit {
   }
 
   async clearMustChangePassword(id: string): Promise<void> {
-    await this.userModel.findByIdAndUpdate(id, { $set: { mustChangePassword: false } }).exec();
+    await this.userModel
+      .findByIdAndUpdate(id, { $set: { mustChangePassword: false } })
+      .exec();
   }
 
   private hashResetToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
 
-  async createPasswordResetToken(email: string): Promise<{ token: string; name: string } | null> {
+  async createPasswordResetToken(
+    email: string,
+  ): Promise<{ token: string; name: string } | null> {
     const user = await this.findByEmail(email);
     if (!user || !user.isActive) return null;
 
@@ -367,7 +389,10 @@ export class UsersService implements OnModuleInit {
       .exec();
   }
 
-  async resetPasswordWithToken(userId: string, newPassword: string): Promise<void> {
+  async resetPasswordWithToken(
+    userId: string,
+    newPassword: string,
+  ): Promise<void> {
     const hashed = await bcrypt.hash(newPassword, 10);
     await this.userModel.findByIdAndUpdate(userId, {
       $set: { password: hashed, mustChangePassword: false },
@@ -379,7 +404,11 @@ export class UsersService implements OnModuleInit {
     return crypto.createHash('sha256').update(code.trim()).digest('hex');
   }
 
-  async setLoginOtp(userId: string, code: string, ttlMs = 10 * 60 * 1000): Promise<void> {
+  async setLoginOtp(
+    userId: string,
+    code: string,
+    ttlMs = 10 * 60 * 1000,
+  ): Promise<void> {
     await this.userModel.findByIdAndUpdate(userId, {
       $set: {
         loginOtpHash: this.hashOtp(code),
@@ -423,7 +452,8 @@ export class UsersService implements OnModuleInit {
 
   async delete(id: string): Promise<void> {
     const result = await this.userModel.deleteOne({ _id: id }).exec();
-    if (result.deletedCount === 0) throw new NotFoundException(`User ${id} not found`);
+    if (result.deletedCount === 0)
+      throw new NotFoundException(`User ${id} not found`);
   }
 
   async countAll(): Promise<number> {
@@ -567,7 +597,9 @@ export class UsersService implements OnModuleInit {
         { 'history.user': LEGACY_PROCESSOR_NAME },
         { changeRequestedBy: new RegExp(LEGACY_PROCESSOR_EMAIL, 'i') },
         { changeRequestedBy: LEGACY_PROCESSOR_NAME },
-        { 'paymentReceipts.uploadedBy': new RegExp(LEGACY_PROCESSOR_EMAIL, 'i') },
+        {
+          'paymentReceipts.uploadedBy': new RegExp(LEGACY_PROCESSOR_EMAIL, 'i'),
+        },
         { 'paymentReceipts.uploadedBy': LEGACY_PROCESSOR_NAME },
       ],
     };

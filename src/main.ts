@@ -83,4 +83,4 @@ async function bootstrap() {
   console.log(`Aceolution Finance API listening on port ${port}`);
   console.log(`Swagger docs at http://localhost:${port}/api/docs`);
 }
-bootstrap();
+void bootstrap();

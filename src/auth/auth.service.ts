@@ -29,7 +29,8 @@ export class AuthService {
   async validateUser(email: string, password: string): Promise<UserDocument> {
     const user = await this.usersService.findByEmail(email);
     if (!user) throw new UnauthorizedException('Invalid email or password');
-    if (!user.isActive) throw new UnauthorizedException('Your account has been deactivated');
+    if (!user.isActive)
+      throw new UnauthorizedException('Your account has been deactivated');
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) throw new UnauthorizedException('Invalid email or password');
     return user;
@@ -154,24 +155,38 @@ export class AuthService {
     methods: TwoFactorMethod[];
   }> {
     if (!challengeToken?.trim()) {
-      throw new UnauthorizedException('Verification session expired. Please sign in again.');
+      throw new UnauthorizedException(
+        'Verification session expired. Please sign in again.',
+      );
     }
-    let payload: { sub?: string; purpose?: string; methods?: TwoFactorMethod[] };
+    let payload: {
+      sub?: string;
+      purpose?: string;
+      methods?: TwoFactorMethod[];
+    };
     try {
       payload = this.jwtService.verify(challengeToken.trim());
     } catch {
-      throw new UnauthorizedException('Verification session expired. Please sign in again.');
+      throw new UnauthorizedException(
+        'Verification session expired. Please sign in again.',
+      );
     }
     if (payload.purpose !== 'login_2fa' || !payload.sub) {
-      throw new UnauthorizedException('Invalid verification session. Please sign in again.');
+      throw new UnauthorizedException(
+        'Invalid verification session. Please sign in again.',
+      );
     }
     const user = await this.usersService.findById(payload.sub);
     if (!user || !user.isActive) {
-      throw new UnauthorizedException('Invalid verification session. Please sign in again.');
+      throw new UnauthorizedException(
+        'Invalid verification session. Please sign in again.',
+      );
     }
     return {
       user,
-      methods: Array.isArray(payload.methods) ? payload.methods : this.availableMethods(user),
+      methods: Array.isArray(payload.methods)
+        ? payload.methods
+        : this.availableMethods(user),
     };
   }
 
@@ -205,7 +220,9 @@ export class AuthService {
       throw new BadRequestException('Enter the 6-digit verification code.');
     }
 
-    const { user, methods } = await this.resolveChallengeToken(params.challengeToken);
+    const { user, methods } = await this.resolveChallengeToken(
+      params.challengeToken,
+    );
     const preferred = params.method;
     const tryOrder: TwoFactorMethod[] =
       preferred && methods.includes(preferred)
@@ -287,22 +304,30 @@ export class AuthService {
 
     return {
       ...setup,
-      message: 'Scan the QR code with your authenticator app, then enter a code to enable it.',
+      message:
+        'Scan the QR code with your authenticator app, then enter a code to enable it.',
     };
   }
 
   async enableTotp(userId: string, _role: string, code: string) {
     const cleaned = String(code || '').replace(/\s/g, '');
     if (!/^\d{6}$/.test(cleaned)) {
-      throw new BadRequestException('Enter the 6-digit code from your authenticator app.');
+      throw new BadRequestException(
+        'Enter the 6-digit code from your authenticator app.',
+      );
     }
 
     const user = await this.usersService.findById(userId);
     if (!user?.totpPendingSecret) {
-      throw new BadRequestException('Start authenticator setup first, then confirm with a code.');
+      throw new BadRequestException(
+        'Start authenticator setup first, then confirm with a code.',
+      );
     }
 
-    const result = verifySync({ token: cleaned, secret: user.totpPendingSecret });
+    const result = verifySync({
+      token: cleaned,
+      secret: user.totpPendingSecret,
+    });
     if (!result.valid) {
       throw new BadRequestException('Invalid authenticator code. Try again.');
     }
@@ -326,7 +351,9 @@ export class AuthService {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
     if (!user.totpEnabled || !user.totpSecret) {
-      throw new BadRequestException('Authenticator is not enabled on this account.');
+      throw new BadRequestException(
+        'Authenticator is not enabled on this account.',
+      );
     }
 
     const passwordOk = await bcrypt.compare(password || '', user.password);
@@ -362,10 +389,15 @@ export class AuthService {
     const user = await this.usersService.findById(userId);
     if (!user) throw new UnauthorizedException('User not found');
     if (!user.totpEnabled || !user.totpSecret) {
-      throw new BadRequestException('Authenticator is not enabled on this account.');
+      throw new BadRequestException(
+        'Authenticator is not enabled on this account.',
+      );
     }
 
-    const passwordOk = await bcrypt.compare(params.password || '', user.password);
+    const passwordOk = await bcrypt.compare(
+      params.password || '',
+      user.password,
+    );
     if (!passwordOk) {
       throw new BadRequestException('Current password is incorrect.');
     }
@@ -402,7 +434,9 @@ export class AuthService {
       );
     }
     if (!user.totpEnabled) {
-      throw new BadRequestException('Authenticator is not enabled on this account.');
+      throw new BadRequestException(
+        'Authenticator is not enabled on this account.',
+      );
     }
 
     const passwordOk = await bcrypt.compare(password || '', user.password);
@@ -426,7 +460,8 @@ export class AuthService {
     return {
       sent: true,
       emailHint: this.maskEmail(user.email),
-      message: 'We sent a 6-digit code to your email. Enter it below to disable authenticator.',
+      message:
+        'We sent a 6-digit code to your email. Enter it below to disable authenticator.',
     };
   }
 
@@ -444,13 +479,18 @@ export class AuthService {
       );
     }
 
-    const passwordOk = await bcrypt.compare(params.password || '', user.password);
+    const passwordOk = await bcrypt.compare(
+      params.password || '',
+      user.password,
+    );
     if (!passwordOk) {
       throw new BadRequestException('Current password is incorrect.');
     }
 
     if (!user.totpEnabled) {
-      throw new BadRequestException('Authenticator is not enabled on this account.');
+      throw new BadRequestException(
+        'Authenticator is not enabled on this account.',
+      );
     }
 
     const cleaned = String(params.code || '').replace(/\s/g, '');
@@ -474,12 +514,19 @@ export class AuthService {
     };
   }
 
-  private validateNewPassword(newPassword: string, confirmPassword?: string): void {
+  private validateNewPassword(
+    newPassword: string,
+    confirmPassword?: string,
+  ): void {
     if (!newPassword || newPassword.length < 8) {
-      throw new BadRequestException('New password must be at least 8 characters.');
+      throw new BadRequestException(
+        'New password must be at least 8 characters.',
+      );
     }
     if (!/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
-      throw new BadRequestException('New password must include at least one letter and one number.');
+      throw new BadRequestException(
+        'New password must include at least one letter and one number.',
+      );
     }
     if (confirmPassword != null && newPassword !== confirmPassword) {
       throw new BadRequestException('Passwords do not match.');
@@ -524,10 +571,15 @@ export class AuthService {
 
     const user = await this.usersService.findByValidResetToken(token.trim());
     if (!user) {
-      throw new BadRequestException('Invalid or expired reset link. Please request a new one.');
+      throw new BadRequestException(
+        'Invalid or expired reset link. Please request a new one.',
+      );
     }
 
-    await this.usersService.resetPasswordWithToken(user._id.toString(), newPassword);
+    await this.usersService.resetPasswordWithToken(
+      user._id.toString(),
+      newPassword,
+    );
 
     return { message: 'Your password has been updated. You can sign in now.' };
   }
@@ -555,7 +607,9 @@ export class AuthService {
     this.validateNewPassword(newPassword, confirmPassword);
 
     if (currentPassword === newPassword) {
-      throw new BadRequestException('New password must be different from your current password.');
+      throw new BadRequestException(
+        'New password must be different from your current password.',
+      );
     }
 
     await this.usersService.updatePassword(userId, newPassword, {
@@ -578,7 +632,8 @@ export class AuthService {
       categories,
       countries,
       demoUsers,
-      message: `${admin.message} ${categories.message} ${countries.message} ${demoUsers.message}`.trim(),
+      message:
+        `${admin.message} ${categories.message} ${countries.message} ${demoUsers.message}`.trim(),
     };
   }
 }

@@ -13,6 +13,8 @@ import { UsersModule } from '../users/users.module';
 import { StorageModule } from '../storage/storage.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
+import { InvoiceParseService } from './invoice-parse.service';
+
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Expense.name, schema: ExpenseSchema }]),
@@ -26,7 +28,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     NotificationsModule,
   ],
   controllers: [ExpensesController],
-  providers: [ExpensesService, ExpensesScheduler],
-  exports: [ExpensesService],
+  providers: [ExpensesService, ExpensesScheduler, InvoiceParseService],
+  exports: [ExpensesService, InvoiceParseService],
 })
 export class ExpensesModule {}

@@ -17,7 +17,7 @@ export type NotificationType =
 @Schema({ collection: 'notifications', timestamps: true })
 export class Notification {
   @Prop({ required: true, index: true })
-  userId: string;
+  userId!: string;
 
   @Prop({
     required: true,
@@ -33,13 +33,13 @@ export class Notification {
       'EXPENSE_DUE_SOON',
     ],
   })
-  type: NotificationType;
+  type!: NotificationType;
 
   @Prop({ required: true })
-  title: string;
+  title!: string;
 
   @Prop({ required: true })
-  message: string;
+  message!: string;
 
   @Prop()
   expenseId?: string;
@@ -48,7 +48,7 @@ export class Notification {
   project?: string;
 
   @Prop({ default: false, index: true })
-  isRead: boolean;
+  isRead!: boolean;
 
   @Prop()
   readAt?: Date;

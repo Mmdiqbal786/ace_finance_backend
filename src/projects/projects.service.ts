@@ -40,7 +40,10 @@ export class ProjectsService implements OnModuleInit {
     await this.ensureUniqueProjectCodes();
     await this.ensureRequiredProjects();
     try {
-      await this.projectModel.collection.createIndex({ code: 1 }, { unique: true });
+      await this.projectModel.collection.createIndex(
+        { code: 1 },
+        { unique: true },
+      );
     } catch (err: any) {
       this.logger.warn(`Project code unique index: ${err?.message || err}`);
     }
@@ -63,7 +66,9 @@ export class ProjectsService implements OnModuleInit {
         this.logger.log(`Created required project "${name}"`);
       } catch (err: any) {
         if (err instanceof ConflictException) continue;
-        this.logger.warn(`Could not ensure project "${name}": ${err?.message || err}`);
+        this.logger.warn(
+          `Could not ensure project "${name}": ${err?.message || err}`,
+        );
       }
     }
   }
@@ -180,7 +185,10 @@ export class ProjectsService implements OnModuleInit {
         });
         return (await project.save()).toObject();
       } catch (err: any) {
-        if (err?.code === 11000 && String(err?.message || '').includes('code')) {
+        if (
+          err?.code === 11000 &&
+          String(err?.message || '').includes('code')
+        ) {
           continue;
         }
         if (err?.code === 11000) {
@@ -189,7 +197,9 @@ export class ProjectsService implements OnModuleInit {
         throw err;
       }
     }
-    throw new ConflictException('Could not allocate a unique project code. Try again.');
+    throw new ConflictException(
+      'Could not allocate a unique project code. Try again.',
+    );
   }
 
   async update(

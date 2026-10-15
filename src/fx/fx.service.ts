@@ -8,10 +8,22 @@ export interface FxConversion {
   rateDate: string;
 }
 
+export interface FxPairConversion {
+  fromCurrency: string;
+  toCurrency: string;
+  amount: number;
+  convertedAmount: number;
+  exchangeRate: number;
+  rateDate: string;
+}
+
 @Injectable()
 export class FxService {
   private readonly logger = new Logger(FxService.name);
-  private cache = new Map<string, { rate: number; date: string; fetchedAt: number }>();
+  private baseCache = new Map<
+    string,
+    { rates: Record<string, number>; date: string; fetchedAt: number }
+  >();
   private readonly CACHE_MS = 60 * 60 * 1000; // 1 hour
 
   async convertToUsd(
@@ -20,7 +32,9 @@ export class FxService {
   ): Promise<FxConversion> {
     const currency = (currencyCode || '').trim().toUpperCase();
     if (!currency || !/^[A-Z]{3}$/.test(currency)) {
-      throw new BadRequestException('A valid 3-letter currency code is required');
+      throw new BadRequestException(
+        'A valid 3-letter currency code is required',
+      );
     }
     if (!Number.isFinite(originalAmount) || originalAmount <= 0) {
       throw new BadRequestException('Amount must be greater than 0');
@@ -37,7 +51,7 @@ export class FxService {
       };
     }
 
-    const { rate, date } = await this.getUsdRate(currency);
+    const { rate, date } = await this.getRate(currency, 'USD');
     const amountUsd = Math.round(originalAmount * rate * 100) / 100;
     if (amountUsd < 1) {
       throw new BadRequestException(
@@ -59,17 +73,60 @@ export class FxService {
     };
   }
 
-  private async getUsdRate(
-    currency: string,
+  async convertBetween(
+    fromCurrency: string,
+    toCurrency: string,
+    amount: number,
+  ): Promise<FxPairConversion> {
+    const from = (fromCurrency || '').trim().toUpperCase();
+    const to = (toCurrency || '').trim().toUpperCase();
+    if (!from || !to) {
+      throw new BadRequestException('from and to currency codes are required');
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('Amount must be greater than 0');
+    }
+
+    if (from === to) {
+      const rounded = Math.round(amount * 100) / 100;
+      return {
+        fromCurrency: from,
+        toCurrency: to,
+        amount: rounded,
+        convertedAmount: rounded,
+        exchangeRate: 1,
+        rateDate: new Date().toISOString().slice(0, 10),
+      };
+    }
+
+    const { rate, date } = await this.getRate(from, to);
+    const convertedAmount = Math.round(amount * rate * 100) / 100;
+    return {
+      fromCurrency: from,
+      toCurrency: to,
+      amount: Math.round(amount * 100) / 100,
+      convertedAmount,
+      exchangeRate: rate,
+      rateDate: date,
+    };
+  }
+
+  private async getRate(
+    from: string,
+    to: string,
   ): Promise<{ rate: number; date: string }> {
-    const cached = this.cache.get(currency);
-    if (cached && Date.now() - cached.fetchedAt < this.CACHE_MS) {
-      return { rate: cached.rate, date: cached.date };
+    const cached = this.baseCache.get(from);
+    if (
+      cached &&
+      Date.now() - cached.fetchedAt < this.CACHE_MS &&
+      cached.rates[to]
+    ) {
+      return { rate: cached.rates[to], date: cached.date };
     }
 
     try {
       const res = await fetch(
-        `https://open.er-api.com/v6/latest/${encodeURIComponent(currency)}`,
+        `https://open.er-api.com/v6/latest/${encodeURIComponent(from)}`,
       );
       if (!res.ok) {
         throw new Error(`FX API HTTP ${res.status}`);
@@ -79,22 +136,28 @@ export class FxService {
         rates?: Record<string, number>;
         time_last_update_utc?: string;
       };
-      if (data.result !== 'success' || !data.rates?.USD) {
-        throw new Error(`No USD rate for ${currency}`);
+      if (data.result !== 'success' || !data.rates) {
+        throw new Error(`No rates returned for ${from}`);
       }
-      const rate = Number(data.rates.USD);
+      const rate = Number(data.rates[to]);
       if (!Number.isFinite(rate) || rate <= 0) {
-        throw new Error(`Invalid USD rate for ${currency}`);
+        throw new Error(`No exchange rate from ${from} to ${to}`);
       }
       const date =
         data.time_last_update_utc?.slice(0, 16) ||
         new Date().toISOString().slice(0, 10);
-      this.cache.set(currency, { rate, date, fetchedAt: Date.now() });
+      this.baseCache.set(from, {
+        rates: data.rates,
+        date,
+        fetchedAt: Date.now(),
+      });
       return { rate, date };
     } catch (err: any) {
-      this.logger.warn(`FX lookup failed for ${currency}: ${err?.message || err}`);
+      this.logger.warn(
+        `FX lookup failed for ${from}->${to}: ${err?.message || err}`,
+      );
       throw new BadRequestException(
-        `Could not fetch today's exchange rate for ${currency}. Try again shortly.`,
+        `Could not fetch today's exchange rate from ${from} to ${to}. Try again shortly.`,
       );
     }
   }

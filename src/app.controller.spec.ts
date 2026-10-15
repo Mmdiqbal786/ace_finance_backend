@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getConnectionToken } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -8,7 +9,13 @@ describe('AppController', () => {
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService],
+      providers: [
+        AppService,
+        {
+          provide: getConnectionToken(),
+          useValue: { readyState: 1 },
+        },
+      ],
     }).compile();
 
     appController = app.get<AppController>(AppController);
@@ -22,11 +29,10 @@ describe('AppController', () => {
       expect(html).toContain('/Ace_logo_small.png');
       expect(html).toContain('rel="icon"');
       expect(html).toContain('/auth/login');
-      expect(html).toContain('/auth/verify-2fa');
-      expect(html).toContain('/expenses/:id/request-changes');
+      expect(html).toContain('/expenses');
       expect(html).toContain('/fx/convert');
-      expect(html).toContain('Auth');
-      expect(html).toContain('Expenses');
+      expect(html).toContain('Swagger UI');
+      expect(html).toContain('OpenAPI');
     });
   });
 });

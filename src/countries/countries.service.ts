@@ -28,11 +28,17 @@ export class CountriesService implements OnModuleInit {
 
   /** Insert any missing seed countries; never overwrite existing rows. */
   async ensureDefaults(): Promise<{ created: boolean; message: string }> {
-    const existing = await this.countryModel.find().select('name').lean().exec();
+    const existing = await this.countryModel
+      .find()
+      .select('name')
+      .lean()
+      .exec();
     const existingNames = new Set(existing.map((c) => c.name.toLowerCase()));
 
     const toInsert = (DEFAULT_COUNTRIES as { name: string; currency: string }[])
-      .filter((c) => c.name && c.currency && !existingNames.has(c.name.toLowerCase()))
+      .filter(
+        (c) => c.name && c.currency && !existingNames.has(c.name.toLowerCase()),
+      )
       .map((c) => ({
         name: c.name.trim(),
         currency: c.currency.trim().toUpperCase(),

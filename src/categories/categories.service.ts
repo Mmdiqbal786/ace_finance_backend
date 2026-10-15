@@ -139,7 +139,10 @@ export class CategoriesService implements OnModuleInit {
   async ensureDefaults(): Promise<{ created: boolean; message: string }> {
     const count = await this.categoryModel.countDocuments().exec();
     if (count > 0) {
-      return { created: false, message: 'Categories already exist. Seed skipped.' };
+      return {
+        created: false,
+        message: 'Categories already exist. Seed skipped.',
+      };
     }
     await this.categoryModel.insertMany(
       DEFAULT_CATEGORIES.map((c) => ({ ...c, isActive: true })),

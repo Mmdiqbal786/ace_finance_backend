@@ -6,10 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  BlobServiceClient,
-  ContainerClient,
-} from '@azure/storage-blob';
+import { BlobServiceClient, ContainerClient } from '@azure/storage-blob';
 import { extname } from 'path';
 
 export type StorageFolder = 'invoices' | 'receipts';
@@ -38,9 +35,12 @@ export class StorageService {
   private readonly containerName: string;
 
   constructor(private readonly config: ConfigService) {
-    const azureConn = this.config.get<string>('AZURE_STORAGE_CONNECTION_STRING')?.trim();
+    const azureConn = this.config
+      .get<string>('AZURE_STORAGE_CONNECTION_STRING')
+      ?.trim();
     this.containerName =
-      this.config.get<string>('AZURE_STORAGE_CONTAINER')?.trim() || 'ace-finance-files';
+      this.config.get<string>('AZURE_STORAGE_CONTAINER')?.trim() ||
+      'ace-finance-files';
 
     if (!azureConn) {
       throw new Error(
@@ -83,7 +83,10 @@ export class StorageService {
     return `${n.toFixed(2)}USD`;
   }
 
-  private makeStructuredFileName(naming: AttachmentNaming, originalName: string): string {
+  private makeStructuredFileName(
+    naming: AttachmentNaming,
+    originalName: string,
+  ): string {
     const expenseId = StorageService.sanitizeKey(naming.expenseId, 'EXP');
     const safeExt = extname(originalName || '').toLowerCase() || '.bin';
     const stamp = StorageService.formatStamp(naming.at || new Date());
@@ -114,7 +117,8 @@ export class StorageService {
     naming?: AttachmentNaming,
   ): Promise<StoredAttachment> {
     const buffer = this.requireBuffer(file);
-    const kind = naming?.kind || (folder === 'invoices' ? 'invoice' : 'receipt');
+    const kind =
+      naming?.kind || (folder === 'invoices' ? 'invoice' : 'receipt');
     const fileName = naming
       ? this.makeStructuredFileName({ ...naming, kind }, file.originalname)
       : `${kind === 'invoice' ? 'inv' : 'rcpt'}-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}${extname(file.originalname || '').toLowerCase() || '.bin'}`;
@@ -130,7 +134,9 @@ export class StorageService {
         blobHTTPHeaders: { blobContentType: mimeType },
       });
     } catch (err: any) {
-      this.logger.error(`Azure upload failed (${path}): ${err?.message || err}`);
+      this.logger.error(
+        `Azure upload failed (${path}): ${err?.message || err}`,
+      );
       throw new ServiceUnavailableException(
         `File upload to cloud storage failed. Request was not saved. (${err?.message || err})`,
       );
@@ -157,18 +163,25 @@ export class StorageService {
       }
       return { buffer: Buffer.concat(chunks) };
     } catch (err: any) {
-      this.logger.warn(`Azure download failed (${path}): ${err?.message || err}`);
+      this.logger.warn(
+        `Azure download failed (${path}): ${err?.message || err}`,
+      );
       throw new NotFoundException('File not found in cloud storage.');
     }
   }
 
-  async deleteAttachment(folder: StorageFolder, fileName?: string): Promise<void> {
+  async deleteAttachment(
+    folder: StorageFolder,
+    fileName?: string,
+  ): Promise<void> {
     if (!fileName) return;
     const path = this.objectPath(folder, fileName);
     try {
       await this.container.getBlockBlobClient(path).deleteIfExists();
     } catch (err: any) {
-      this.logger.warn(`Azure delete failed for ${path}: ${err?.message || err}`);
+      this.logger.warn(
+        `Azure delete failed for ${path}: ${err?.message || err}`,
+      );
     }
   }
 }

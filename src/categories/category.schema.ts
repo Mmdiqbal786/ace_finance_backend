@@ -6,16 +6,16 @@ export type CategoryDocument = Category & Document;
 @Schema({ collection: 'categories', timestamps: true })
 export class Category {
   @Prop({ required: true, unique: true, trim: true })
-  name: string;
+  name!: string;
 
   @Prop({ required: true, trim: true })
-  label: string;
+  label!: string;
 
   @Prop({ default: '📦' })
-  icon: string;
+  icon!: string;
 
   @Prop({ default: true })
-  isActive: boolean;
+  isActive!: boolean;
 }
 
 export const CategorySchema = SchemaFactory.createForClass(Category);

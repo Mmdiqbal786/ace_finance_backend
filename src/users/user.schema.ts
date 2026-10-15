@@ -8,27 +8,27 @@ export type UserRole = 'ADMIN' | 'APPROVER' | 'PROCESSOR' | 'REQUESTER';
 @Schema({ collection: 'users', timestamps: true })
 export class User {
   @Prop({ required: true })
-  name: string;
+  name!: string;
 
   @Prop({ required: true, unique: true, lowercase: true })
-  email: string;
+  email!: string;
 
   @Prop({ required: true })
-  password: string;
+  password!: string;
 
   @Prop({
     required: true,
     enum: ['ADMIN', 'APPROVER', 'PROCESSOR', 'REQUESTER'],
     default: 'APPROVER',
   })
-  role: UserRole;
+  role!: UserRole;
 
   @Prop({ default: true })
-  isActive: boolean;
+  isActive!: boolean;
 
   /** When true, user must set a new password before accessing the dashboard */
   @Prop({ default: false })
-  mustChangePassword: boolean;
+  mustChangePassword!: boolean;
 
   @Prop()
   passwordResetToken?: string;

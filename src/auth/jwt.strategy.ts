@@ -15,7 +15,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: any) {
     if (payload?.purpose === 'login_2fa') {
-      throw new UnauthorizedException('Complete two-factor verification to continue.');
+      throw new UnauthorizedException(
+        'Complete two-factor verification to continue.',
+      );
     }
     return {
       userId: payload.sub,

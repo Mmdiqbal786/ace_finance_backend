@@ -73,7 +73,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
-    if (status === HttpStatus.NOT_FOUND) {
+    if (status === 404) {
       res
         .status(status)
         .send(renderNotFoundPage(req.originalUrl || req.url || '/'));

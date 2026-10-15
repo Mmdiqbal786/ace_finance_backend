@@ -29,26 +29,31 @@ export class MailService {
   constructor(private readonly config: ConfigService) {}
 
   private isConfigured(): boolean {
-    if (this.config.get<string>('AZURE_COMMUNICATION_CONNECTION_STRING')?.trim()) {
+    if (
+      this.config.get<string>('AZURE_COMMUNICATION_CONNECTION_STRING')?.trim()
+    ) {
       return Boolean(this.config.get<string>('AZURE_EMAIL_SENDER')?.trim());
     }
     if (this.config.get<string>('RESEND_API_KEY')?.trim()) return true;
     return Boolean(
       this.config.get<string>('SMTP_HOST') &&
-        this.config.get<string>('SMTP_USER') &&
-        this.config.get<string>('SMTP_PASS'),
+      this.config.get<string>('SMTP_USER') &&
+      this.config.get<string>('SMTP_PASS'),
     );
   }
 
   private frontendBase(): string {
-    return (this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000').replace(/\/$/, '');
+    return (
+      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000'
+    ).replace(/\/$/, '');
   }
 
   /** Optional BCC copies (comma-separated), e.g. finance@aceolution.com */
   private mailBccList(excludeTo?: string): string[] {
-    const raw = this.config.get<string>('AZURE_EMAIL_BCC')?.trim()
-      || this.config.get<string>('MAIL_BCC')?.trim()
-      || '';
+    const raw =
+      this.config.get<string>('AZURE_EMAIL_BCC')?.trim() ||
+      this.config.get<string>('MAIL_BCC')?.trim() ||
+      '';
     if (!raw) return [];
     const exclude = (excludeTo || '').trim().toLowerCase();
     return raw
@@ -100,7 +105,8 @@ export class MailService {
         `${this.formatMoney(expense.originalAmount, expense.currency)} (≈ ${this.formatMoney(expense.amountUsd, 'USD')})`,
       ],
     ];
-    if (expense.invoiceNumber) rows.push(['Invoice number', expense.invoiceNumber]);
+    if (expense.invoiceNumber)
+      rows.push(['Invoice number', expense.invoiceNumber]);
     if (expense.invoiceDate) rows.push(['Invoice date', expense.invoiceDate]);
     if (expense.dueDate) rows.push(['Due date', expense.dueDate]);
     if (expense.description) rows.push(['Description', expense.description]);
@@ -130,7 +136,8 @@ export class MailService {
       `Country: ${expense.country}`,
       `Amount: ${this.formatMoney(expense.originalAmount, expense.currency)} (≈ ${this.formatMoney(expense.amountUsd, 'USD')})`,
     ];
-    if (expense.invoiceNumber) lines.push(`Invoice number: ${expense.invoiceNumber}`);
+    if (expense.invoiceNumber)
+      lines.push(`Invoice number: ${expense.invoiceNumber}`);
     if (expense.invoiceDate) lines.push(`Invoice date: ${expense.invoiceDate}`);
     if (expense.dueDate) lines.push(`Due date: ${expense.dueDate}`);
     if (expense.description) lines.push(`Description: ${expense.description}`);
@@ -152,7 +159,10 @@ export class MailService {
     const senderAddress = this.config.get<string>('AZURE_EMAIL_SENDER')?.trim();
 
     if (!connectionString) {
-      return { sent: false, reason: 'AZURE_COMMUNICATION_CONNECTION_STRING missing' };
+      return {
+        sent: false,
+        reason: 'AZURE_COMMUNICATION_CONNECTION_STRING missing',
+      };
     }
     if (!senderAddress) {
       return { sent: false, reason: 'AZURE_EMAIL_SENDER missing' };
@@ -178,7 +188,8 @@ export class MailService {
 
       const result = await poller.pollUntilDone();
       if (result.status !== 'Succeeded') {
-        const reason = result.error?.message || `Azure Email status: ${result.status}`;
+        const reason =
+          result.error?.message || `Azure Email status: ${result.status}`;
         this.logger.error(
           `Failed to send ${params.context} via Azure Email to ${params.to}: ${reason}`,
         );
@@ -237,17 +248,23 @@ export class MailService {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         const reason =
-          (body as any)?.message ||
-          (Array.isArray((body as any)?.error) ? (body as any).error.join(' ') : '') ||
+          body?.message ||
+          (Array.isArray(body?.error) ? body.error.join(' ') : '') ||
           `Resend HTTP ${res.status}`;
-        this.logger.error(`Failed to send ${params.context} via Resend to ${params.to}: ${reason}`);
+        this.logger.error(
+          `Failed to send ${params.context} via Resend to ${params.to}: ${reason}`,
+        );
         return { sent: false, reason: String(reason) };
       }
-      this.logger.log(`Sent ${params.context} email via Resend to ${params.to}`);
+      this.logger.log(
+        `Sent ${params.context} email via Resend to ${params.to}`,
+      );
       return { sent: true };
     } catch (err: any) {
       const reason = err?.message || 'Resend request failed';
-      this.logger.error(`Failed to send ${params.context} via Resend to ${params.to}: ${reason}`);
+      this.logger.error(
+        `Failed to send ${params.context} via Resend to ${params.to}: ${reason}`,
+      );
       return { sent: false, reason: String(reason) };
     }
   }
@@ -265,7 +282,9 @@ export class MailService {
     const pass = this.config.get<string>('SMTP_PASS')?.replace(/\s+/g, '');
 
     // Force IPv4 — some hosts cannot reach Gmail AAAA addresses
-    const { address: ipv4Host } = await dns.promises.lookup(host, { family: 4 });
+    const { address: ipv4Host } = await dns.promises.lookup(host, {
+      family: 4,
+    });
     this.logger.log(`SMTP connecting via IPv4 ${ipv4Host}:${port} (${host})`);
 
     const transportOptions: SMTPTransport.Options = {
@@ -316,12 +335,16 @@ export class MailService {
     }
 
     if (!this.isConfigured()) {
-      this.logger.warn(`Mail not configured — ${params.context} email to ${params.to} was not sent.`);
+      this.logger.warn(
+        `Mail not configured — ${params.context} email to ${params.to} was not sent.`,
+      );
       return { sent: false, reason: 'Mail not configured' };
     }
 
     // Prefer Azure Email (HTTPS), then Resend, then SMTP
-    if (this.config.get<string>('AZURE_COMMUNICATION_CONNECTION_STRING')?.trim()) {
+    if (
+      this.config.get<string>('AZURE_COMMUNICATION_CONNECTION_STRING')?.trim()
+    ) {
       return this.sendViaAzureCommunication(params);
     }
 
@@ -343,7 +366,12 @@ export class MailService {
     }
   }
 
-  private wrapHtml(title: string, bodyHtml: string, ctaLabel?: string, ctaUrl?: string): string {
+  private wrapHtml(
+    title: string,
+    bodyHtml: string,
+    ctaLabel?: string,
+    ctaUrl?: string,
+  ): string {
     const cta =
       ctaLabel && ctaUrl
         ? `<p><a href="${ctaUrl}" style="display:inline-block;background:#203c62;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">${this.escapeHtml(ctaLabel)}</a></p>`
