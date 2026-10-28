@@ -102,21 +102,11 @@ export class AppController {
     const liveUp = this.connection.readyState === ConnectionStates.connected;
     const demoUp =
       this.demoConnection.readyState === ConnectionStates.connected;
-    // Do not expose real Mongo database names publicly
+    // Minimal public probe — no store topology / connection state details
     return {
       status: liveUp && demoUp ? 'ok' : 'degraded',
       service: 'Aceolution Finance API',
       timestamp: new Date().toISOString(),
-      stores: {
-        live: {
-          ready: liveUp,
-          state: ConnectionStates[this.connection.readyState] ?? 'unknown',
-        },
-        demo: {
-          ready: demoUp,
-          state: ConnectionStates[this.demoConnection.readyState] ?? 'unknown',
-        },
-      },
     };
   }
 

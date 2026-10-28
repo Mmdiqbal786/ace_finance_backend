@@ -33,10 +33,10 @@ import { ExpensesService } from './expenses.service';
 import { attachmentMulterOptions } from './attachment-upload';
 import { StorageService } from '../storage/storage.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import type { ActingUser } from './expenses.service';
+import { assertAttachmentMagic } from '../common/file-magic';
 import {
   CreateExpenseDto,
   ExpenseNotesDto,
@@ -124,6 +124,7 @@ export class ExpensesController {
     }
 
     const actingUser = this.actingUserFromReq(req);
+    assertAttachmentMagic(file.buffer, file.mimetype, 'invoice');
 
     const fileHash = crypto
       .createHash('sha256')
@@ -249,6 +250,7 @@ export class ExpensesController {
     if (!file) {
       throw new BadRequestException('File is required for parsing.');
     }
+    assertAttachmentMagic(file.buffer, file.mimetype, 'invoice');
     const result = await this.expensesService.parseInvoiceDocument(
       file.buffer,
       file.originalname,
@@ -433,25 +435,26 @@ export class ExpensesController {
     return new StreamableFile(Readable.from(receipt.buffer));
   }
 
-  // Public track (redacted) — full record when signed-in viewer has access
+  // Authenticated detail only — no anonymous status enumeration
   @Get(':id')
-  @UseGuards(OptionalJwtAuthGuard)
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Track an expense by ID',
+    summary: 'Get expense by ID (authorized viewers)',
     description: howWhy({
-      why: 'Status tracking and request detail.',
-      how: 'Without auth → redacted public summary (no file names / hashes / receipts). With Bearer and access → full expense.',
+      why: 'Request detail for staff / owner.',
+      how: 'Bearer required. Requester = own; Approver = assigned projects; Processor/Admin = all.',
     }),
   })
   @ApiSopResponses({
     successData: EXPENSE_APPROVED,
-    auth: false,
     notFound: EXPENSE_NOT_FOUND,
   })
   async findOne(@Param('id') id: string, @Request() req: any) {
-    const acting = req.user?.email ? this.actingUserFromReq(req) : null;
-    return this.expensesService.findOneForViewer(id, acting);
+    return this.expensesService.findOneForViewer(
+      id,
+      this.actingUserFromReq(req),
+    );
   }
 
   // APPROVER or ADMIN only
@@ -575,6 +578,7 @@ export class ExpensesController {
     if (!file) {
       throw new BadRequestException('Payment receipt attachment is required.');
     }
+    assertAttachmentMagic(file.buffer, file.mimetype, 'receipt');
     const paymentAmountUsd = await this.expensesService.getRemainingUsd(id);
     const stored = await this.storageService.saveAttachment('receipts', file, {
       expenseId: id,
@@ -622,6 +626,7 @@ export class ExpensesController {
     if (!file) {
       throw new BadRequestException('Payment receipt attachment is required.');
     }
+    assertAttachmentMagic(file.buffer, file.mimetype, 'receipt');
     const paymentAmountUsd = Number(body.amount);
     const stored = await this.storageService.saveAttachment('receipts', file, {
       expenseId: id,
@@ -751,6 +756,7 @@ export class ExpensesController {
     if (!file) {
       throw new BadRequestException('Invoice attachment is required.');
     }
+    assertAttachmentMagic(file.buffer, file.mimetype, 'invoice');
 
     const actingUser = this.actingUserFromReq(req);
     // ACL before any Azure write

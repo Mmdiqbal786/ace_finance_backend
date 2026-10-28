@@ -19,6 +19,7 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { MicrosoftAuthService } from './microsoft-auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -27,6 +28,10 @@ import {
   assertSeedSecret,
   readDemoAccessCode,
 } from './demo-access.util';
+import {
+  clearAccessCookie,
+  maybeAttachAccessCookie,
+} from './auth-cookie.util';
 import {
   ChangePasswordDto,
   ForgotPasswordDto,
@@ -183,10 +188,9 @@ export class AuthController {
       if (!accessToken) {
         return fail('Microsoft sign-in did not return a session. Try again.');
       }
-      return res.redirect(
-        HttpStatus.FOUND,
-        `${frontend}/login/#ms_token=${encodeURIComponent(accessToken)}`,
-      );
+      // httpOnly cookie — avoid putting the session JWT in the URL (logs / history).
+      maybeAttachAccessCookie(res, { access_token: accessToken });
+      return res.redirect(HttpStatus.FOUND, `${frontend}/login/?ms_ok=1`);
     } catch (err: any) {
       const message =
         typeof err?.message === 'string' && err.message.length < 180
@@ -197,6 +201,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Login with email and password',
     description: howWhy({
@@ -216,11 +221,17 @@ export class AuthController {
     auth: 'Invalid email or password',
     badRequest: 'We could not send the verification email (SMTP error).',
   })
-  async login(@Body() body: LoginDto) {
-    return this.authService.login(body.email, body.password);
+  async login(
+    @Body() body: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.login(body.email, body.password);
+    maybeAttachAccessCookie(res, result);
+    return result;
   }
 
   @Post('verify-demo-access')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Verify demo-guide access code (server-side)',
     description: howWhy({
@@ -239,7 +250,79 @@ export class AuthController {
     return { ok: true };
   }
 
+  @Get('demo-guide-pack')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Demo guide credential pack (server-side)',
+    description: howWhy({
+      why: 'Show test passwords only after DEMO_ACCESS_CODE — never ship them in the frontend bundle.',
+      how: 'GET with `X-Demo-Access-Code` → `{ primaryAccounts, demoStaff }` (includes passwords).',
+    }),
+  })
+  @ApiHeader({
+    name: 'X-Demo-Access-Code',
+    required: false,
+    description: 'Required when DEMO_ACCESS_CODE is configured on the API',
+  })
+  @ApiSopResponses({
+    successData: {
+      primaryAccounts: [],
+      demoStaff: [],
+    },
+    auth: false,
+  })
+  async demoGuidePack(@Headers('x-demo-access-code') headerCode?: string) {
+    assertDemoAccessCode(readDemoAccessCode({ header: headerCode }));
+    return this.authService.getDemoGuidePack();
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Current session user',
+    description: howWhy({
+      why: 'Restore the signed-in user from httpOnly cookie or Bearer token after Microsoft redirect.',
+      how: 'GET with cookie/Bearer → `{ user }` (same shape as login).',
+    }),
+  })
+  @ApiSopResponses({ successData: { user: LOGIN_DATA.user } })
+  async me(@Request() req: any) {
+    return {
+      user: {
+        id: req.user.userId,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role,
+        mustChangePassword: Boolean(req.user.mustChangePassword),
+        mustSetupTotp: Boolean(req.user.mustSetupTotp),
+        totpEnabled: Boolean(req.user.totpEnabled),
+        assignedProjects: Array.isArray(req.user.assignedProjects)
+          ? req.user.assignedProjects
+          : [],
+        isDemo: Boolean(req.user.isDemo),
+        store: req.user.store === 'demo' ? 'demo' : 'live',
+        microsoftLinked: Boolean(req.user.microsoftLinked),
+      },
+    };
+  }
+
+  @Post('logout')
+  @ApiOperation({
+    summary: 'Clear session cookie',
+    description: howWhy({
+      why: 'Sign out clears the httpOnly access cookie.',
+      how: 'POST → `{ ok: true }` and clears `ace_af_token`.',
+    }),
+  })
+  @ApiSopResponses({ successStatus: 201, successData: { ok: true }, auth: false })
+  logout(@Res({ passthrough: true }) res: Response) {
+    clearAccessCookie(res);
+    return { ok: true };
+  }
+
   @Get('demo-accounts')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiOperation({
     summary: 'List Demo Access personas (dynamic)',
     description: howWhy({
@@ -290,8 +373,10 @@ export class AuthController {
     successDescription: 'Signed into the demo store (isDemo persona).',
     auth: 'Not a demo persona / inactive / bad access code / bad password',
   })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async demoLogin(
     @Body() body: DemoLoginDto,
+    @Res({ passthrough: true }) res: Response,
     @Headers('x-demo-access-code') headerCode?: string,
   ) {
     assertDemoAccessCode(
@@ -300,10 +385,13 @@ export class AuthController {
         bodyCode: body.accessCode,
       }),
     );
-    return this.authService.demoLogin(body.email, body.password);
+    const result = await this.authService.demoLogin(body.email, body.password);
+    maybeAttachAccessCookie(res, result);
+    return result;
   }
 
   @Post('select-workspace')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Choose Live or Demo workspace (dual-store accounts)',
     description: howWhy({
@@ -320,11 +408,20 @@ export class AuthController {
     auth: 'Invalid or expired workspaceToken',
     badRequest: 'Choose live or demo workspace.',
   })
-  async selectWorkspace(@Body() body: SelectWorkspaceDto) {
-    return this.authService.selectWorkspace(body.workspaceToken, body.store);
+  async selectWorkspace(
+    @Body() body: SelectWorkspaceDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.selectWorkspace(
+      body.workspaceToken,
+      body.store,
+    );
+    maybeAttachAccessCookie(res, result);
+    return result;
   }
 
   @Post('verify-2fa')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Complete sign-in with email OTP or authenticator code',
     description: howWhy({
@@ -341,11 +438,17 @@ export class AuthController {
     auth: 'Invalid or expired verification code.',
     badRequest: 'Enter the 6-digit verification code.',
   })
-  async verify2fa(@Body() body: Verify2faDto) {
-    return this.authService.verifyLogin2fa(body);
+  async verify2fa(
+    @Body() body: Verify2faDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.verifyLogin2fa(body);
+    maybeAttachAccessCookie(res, result);
+    return result;
   }
 
   @Post('resend-otp')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Resend the login email OTP',
     description: howWhy({
@@ -420,12 +523,18 @@ export class AuthController {
     },
     badRequest: 'Enter the 6-digit code from your authenticator app.',
   })
-  async totpEnable(@Request() req: any, @Body() body: TotpCodeDto) {
-    return this.authService.enableTotp(
+  async totpEnable(
+    @Request() req: any,
+    @Body() body: TotpCodeDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.enableTotp(
       req.user.userId,
       req.user.role,
       body.code,
     );
+    maybeAttachAccessCookie(res, result);
+    return result;
   }
 
   @Post('totp/replace/send-code')
@@ -537,16 +646,23 @@ export class AuthController {
     successData: LOGIN_DATA,
     badRequest: 'Current password is incorrect.',
   })
-  async changePassword(@Request() req: any, @Body() body: ChangePasswordDto) {
-    return this.authService.changePassword(
+  async changePassword(
+    @Request() req: any,
+    @Body() body: ChangePasswordDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.changePassword(
       req.user.userId,
       body.currentPassword,
       body.newPassword,
       body.confirmPassword,
     );
+    maybeAttachAccessCookie(res, result);
+    return result;
   }
 
   @Post('forgot-password')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Send password reset email',
     description: howWhy({
@@ -568,6 +684,7 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Reset password with the emailed token',
     description: howWhy({
@@ -593,6 +710,7 @@ export class AuthController {
   }
 
   @Get('validate-reset-token')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Check whether a reset token is still valid',
     description: howWhy({
@@ -612,6 +730,7 @@ export class AuthController {
 
   // Bootstrap seed — requires X-Seed-Secret matching SEED_SECRET
   @Post('seed')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Seed admin, categories, countries and demo users',
     description: howWhy({

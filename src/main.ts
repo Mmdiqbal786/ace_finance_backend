@@ -7,8 +7,11 @@ dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
 import { join } from 'path';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { getAbsoluteFSPath } from 'swagger-ui-dist';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { ApiExceptionFilter } from './common/api-exception.filter';
 import {
@@ -20,6 +23,24 @@ import { setOpenApiDocument } from './common/swagger/openapi-store';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.useGlobalFilters(new ApiExceptionFilter());
+  app.useGlobalPipes(
+    new ValidationPipe({
+      // Keep false until every @Body DTO has class-validator decorators
+      // (whitelist would strip undecorated expense/catalog fields).
+      whitelist: false,
+      forbidNonWhitelisted: false,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
+  app.use(
+    helmet({
+      // API serves JSON + branded docs HTML; CSP is enforced on the SWA frontend.
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
+  app.use(cookieParser());
   // Serve logo/assets only — do not treat "/" as a missing index.html (that caused 404)
   app.useStaticAssets(join(__dirname, '..', 'public'), {
     index: false,

@@ -879,27 +879,18 @@ export class ExpensesService {
     return expense;
   }
 
-  /** Anonymous track — status only (no amounts, names, history, or files). */
-  toPublicTrackView(expense: Expense): Record<string, unknown> {
-    return {
-      id: expense.id,
-      status: expense.status,
-      submittedAt: expense.submittedAt,
-    };
-  }
-
   /**
-   * Anonymous → redacted public track. Signed-in → full expense if authorized
-   * (otherwise Forbidden).
+   * Signed-in viewers only — full expense if authorized (otherwise Forbidden).
+   * No anonymous / public track (avoids existence + status enumeration).
    */
   async findOneForViewer(
     id: string,
     actingUser?: ActingUser | null,
-  ): Promise<Expense | Record<string, unknown>> {
-    const expense = await this.findOne(id);
+  ): Promise<Expense> {
     if (!actingUser?.email) {
-      return this.toPublicTrackView(expense);
+      throw new ForbiddenException('You must be signed in to view this expense.');
     }
+    const expense = await this.findOne(id);
     await this.assertCanViewExpense(expense, actingUser);
     return expense;
   }

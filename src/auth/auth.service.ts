@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
@@ -13,12 +14,15 @@ import { CategoriesService } from '../categories/categories.service';
 import { CountriesService } from '../countries/countries.service';
 import { MailService } from '../mail/mail.service';
 import { UserDocument } from '../users/user.schema';
+import { DEMO_SCOPED_USERS } from '../users/demo-users.seed';
 import { currentDemo, withDemoScope } from '../common/store/demo-scope';
 
 type TwoFactorMethod = 'email' | 'totp';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
@@ -29,18 +33,14 @@ export class AuthService {
 
   async validateUser(email: string, password: string): Promise<UserDocument> {
     const user = await this.usersService.findByEmail(email);
-    if (!user) throw new UnauthorizedException('Invalid email or password');
-    if (!user.isActive)
-      throw new UnauthorizedException('Your account has been deactivated');
-    // Microsoft-linked accounts must use Sign in with Microsoft (no password bypass).
-    if (user.microsoftId) {
-      throw new UnauthorizedException(
-        'This account uses Microsoft sign-in. Use Sign in with Microsoft on the login page.',
-      );
-    }
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) throw new UnauthorizedException('Invalid email or password');
-    return user;
+    // Always the same message — do not reveal existence, Microsoft link, or active flag.
+    const invalid = () => {
+      throw new UnauthorizedException('Invalid email or password');
+    };
+    if (!user || !user.isActive || user.microsoftId) invalid();
+    const isMatch = await bcrypt.compare(password, user!.password);
+    if (!isMatch) invalid();
+    return user!;
   }
 
   private maskEmail(email: string): string {
@@ -414,6 +414,59 @@ export class AuthService {
   /** Public list for the login Demo Access picker (demo DB, isDemo only). */
   async listDemoAccounts() {
     return withDemoScope(true, () => this.usersService.listDemoAccessAccounts());
+  }
+
+  /**
+   * Credential tables for the demo guide UI/copy — only after DEMO_ACCESS_CODE.
+   * Keeps passwords out of the frontend JS bundle.
+   */
+  getDemoGuidePack() {
+    const roleLabel = (role: string, isDemo: boolean) => {
+      if (role === 'ADMIN') return 'Users, catalogs, full access';
+      if (role === 'PROCESSOR') {
+        return isDemo
+          ? 'PROCESSOR'
+          : 'Pay / partial pay (all projects)';
+      }
+      if (role === 'APPROVER') {
+        return isDemo ? 'APPROVER' : 'Approve — GAC + GNL + GNP';
+      }
+      if (role === 'REQUESTER') {
+        return isDemo ? 'REQUESTER' : 'Submit & track — GAC + GNL only';
+      }
+      return role;
+    };
+
+    const primaryAccounts = DEMO_SCOPED_USERS.filter((u) => !u.isDemo).map(
+      (u) => ({
+        label: u.name.replace(/^Demo\s+/i, ''),
+        email: u.email,
+        password: u.password,
+        role: roleLabel(u.role, false),
+        login2fa:
+          u.role === 'ADMIN'
+            ? 'Password only'
+            : 'Email OTP',
+        projects:
+          u.assignedProjects?.length > 0
+            ? u.assignedProjects.join('; ')
+            : 'All projects',
+      }),
+    );
+
+    const demoStaff = DEMO_SCOPED_USERS.filter((u) => u.isDemo).map((u) => ({
+      name: u.name,
+      email: u.email,
+      password: u.password,
+      role: u.role,
+      projects:
+        u.assignedProjects?.length > 0
+          ? u.assignedProjects.join('; ')
+          : 'All projects',
+      login2fa: 'Password only (demo)',
+    }));
+
+    return { primaryAccounts, demoStaff };
   }
 
   /**
@@ -807,31 +860,30 @@ export class AuthService {
       throw new BadRequestException('Please enter a valid email address.');
     }
 
-    const existing = await this.usersService.findByEmail(normalized);
-    if (existing?.microsoftId) {
-      throw new BadRequestException(
-        'This account uses Microsoft sign-in. Use Sign in with Microsoft — password reset is not available.',
-      );
-    }
+    const generic = {
+      message:
+        'If an account exists for that email and supports password sign-in, a reset link has been sent. Microsoft-linked accounts must use Sign in with Microsoft.',
+    };
 
-    const reset = await this.usersService.createPasswordResetToken(normalized);
-    if (reset) {
-      const mailResult = await this.mailService.sendPasswordResetEmail({
-        to: normalized,
-        name: reset.name,
-        token: reset.token,
-      });
-      if (!mailResult.sent) {
-        throw new BadRequestException(
-          'We could not send the reset email. Check SMTP settings or contact your administrator.',
-        );
+    const existing = await this.usersService.findByEmail(normalized);
+    // Do not reveal whether the email exists or is Microsoft-linked.
+    if (!existing?.microsoftId) {
+      const reset = await this.usersService.createPasswordResetToken(normalized);
+      if (reset) {
+        const mailResult = await this.mailService.sendPasswordResetEmail({
+          to: normalized,
+          name: reset.name,
+          token: reset.token,
+        });
+        if (!mailResult.sent) {
+          this.logger.warn(
+            `Password reset email failed for ${normalized}: ${mailResult.reason || 'unknown'}`,
+          );
+        }
       }
     }
 
-    return {
-      message:
-        'If an account exists for that email, a password reset link has been sent. Please check your inbox.',
-    };
+    return generic;
   }
 
   async resetPassword(

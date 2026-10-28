@@ -28,20 +28,28 @@ Prefer **Demo Access** / **Demo workspace** for destructive tests. Keep Live rea
 
 ## 3. Hardening already applied (re-test after deploy)
 
-- CORS allowlist (`FRONTEND_URL` + optional `CORS_ORIGINS`) — not `*`; localhost not allowed in production  
+- CORS allowlist (`FRONTEND_URL` + optional `CORS_ORIGINS`) — not `*`; localhost not allowed in production; `credentials: true` for httpOnly cookies  
+- Helmet on API; SWA `staticwebapp.config.json` security headers + CSP (frontend)  
+- Global rate limit + stricter `@Throttle` on login / OTP / forgot-reset / demo / seed / guide-pack  
+- `ValidationPipe` + class-validator on auth + expense body DTOs  
+- Session: httpOnly cookie `ace_af_token` (SameSite=None in prod cross-site) **or** Bearer; FE does **not** store JWT in `localStorage`  
+- Microsoft callback sets cookie and redirects `?ms_ok=1` (no access token in URL); legacy `#ms_token` only for older builds  
 - `POST /expenses` requires JWT; requester email bound from token; ACL/catalogs validated before Azure upload; orphan blob cleanup on failure  
+- Upload MIME/ext filter **plus** magic-byte check (PDF/JPEG/PNG/GIF/WEBP)  
 - `GET /expenses` + stats: REQUESTER = own only; APPROVER = assigned projects; ADMIN/PROCESSOR = all  
 - Invoice / payment-receipt / delete ACL via `assertCanViewExpense`  
-- Public `GET /expenses/:id` = status only (no amounts/names/history/files)  
+- `GET /expenses/:id` requires JWT + ACL — **no anonymous public track** (no status/existence oracle)  
 - Duplicate messages generic (no peer name/id oracle)  
 - JWT strategy rejects challenge / `ms_oauth` / `workspace_choice` tokens as Bearer sessions  
-- Demo guide unlock via `POST /auth/verify-demo-access` (code not compared in JS bundle)  
+- Demo guide unlock via `POST /auth/verify-demo-access` (code not in JS bundle; never `NEXT_PUBLIC_*`)  
+- Guide passwords via `GET /auth/demo-guide-pack` only with `X-Demo-Access-Code` (not baked into FE)  
 - Demo Access requires access code + persona password  
 - Catalogs `/active` + FX convert require JWT; Swagger off in production unless `ENABLE_API_DOCS=true`  
-- Health JSON omits Mongo database names  
-- `POST /auth/seed` requires `X-Seed-Secret`; prod boot seed skipped unless `ALLOW_BOOT_SEED=true`  
+- Health JSON: `status` / `service` / `timestamp` only (no store topology)  
+- Forgot-password + password login: no Microsoft / inactive / existence enumeration  
+- `POST /auth/seed` requires `X-Seed-Secret` + throttle; prod boot seed skipped unless `ALLOW_BOOT_SEED=true`  
 - Boot assert: live ≠ demo Mongo URI and blob containers  
-- Microsoft callback tokens in URL **hash** only
+- Architecture PDF not published as a public static URL (`/architecture/*` → 404 on SWA)
 
 ## 4. In-scope test themes
 
@@ -53,8 +61,11 @@ Prefer **Demo Access** / **Demo workspace** for destructive tests. Keep Live rea
 6. File upload / download (type, size, path traversal, auth on blobs)  
 7. Admin user management — `isDemo` / Demo Access toggle  
 8. Duplicate-detection bypass attempts (hard vs soft)  
-9. Security headers, CORS, cookie/token storage (SPA + API)  
-10. Information disclosure (errors, Swagger, health, guides gate)  
+9. Security headers, CORS, httpOnly cookie session + credentialed CORS  
+10. Information disclosure (errors, Swagger, health, guides gate, demo-guide-pack)  
+11. Rate limiting / auth brute-force resistance  
+12. File magic-byte / content-type spoofing  
+13. Anonymous expense ID enumeration (expect 401, not status leak)  
 
 ## 5. Out of scope
 
@@ -91,11 +102,15 @@ Please send source IPs (or ranges) used for scanning **before** the window start
 
 ## 9. Pre-flight (Aceolution — before kickoff)
 
-- [ ] Frontend deployed with latest docs / login / architecture  
+- [ ] **Commit + push + deploy** latest FE+BE security hardening (cookie session, throttles, no public expense track, demo-guide-pack)  
+- [ ] Frontend SWA build has **no** `NEXT_PUBLIC_DEMO_GUIDE_ACCESS_PASSWORD`  
+- [ ] API `FRONTEND_URL=https://finance.aceolution.com` (required for cookie SameSite / CORS)  
 - [ ] API deployed with `MONGODB_URI` + `MONGODB_URI_DEMO` and live + demo blob containers  
-- [ ] `DEMO_ACCESS_CODE` set on API (matches demo-guide password); `SEED_SECRET` unset or rotated after seed  
-- [ ] `GET /health?format=json` shows both Mongo stores connected  
-- [ ] Demo Access list loads on `/login/` (with access code)  
+- [ ] `DEMO_ACCESS_CODE` set on API; `SEED_SECRET` unset or rotated after seed; `ENABLE_API_DOCS` not true in prod  
+- [ ] `GET /health?format=json` → `status: ok` (no store names)  
+- [ ] After Microsoft login, land on `?ms_ok=1` and stay signed in (cookie); DevTools Application shows no `ace_finance_token` in localStorage  
+- [ ] Demo Access list loads on `/login/` (with access code); guide accounts load only after unlock  
+- [ ] Unauthenticated `GET /expenses/{id}` → 401 (not a public status body)  
 - [ ] Admin can Choose Live / Demo; Demo badge visible  
 - [ ] Microsoft login works for a test `@aceolution.*` account (if in scope)  
 - [ ] Vendor IPs allowlisted only if WAF/App Gateway rules require it  
