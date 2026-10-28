@@ -6,24 +6,38 @@ import {
   Request,
   Get,
   Query,
+  Res,
+  Headers,
+  HttpStatus,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiHeader,
   ApiOperation,
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
+import { MicrosoftAuthService } from './microsoft-auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import {
+  assertDemoAccessCode,
+  assertSeedSecret,
+  readDemoAccessCode,
+} from './demo-access.util';
 import {
   ChangePasswordDto,
   ForgotPasswordDto,
+  DemoLoginDto,
+  VerifyDemoAccessDto,
   LoginDto,
   PasswordConfirmDto,
   PasswordWithCodeDto,
   ResendOtpDto,
   ResetPasswordDto,
+  SelectWorkspaceDto,
   TotpCodeDto,
   Verify2faDto,
 } from './dto/auth.dto';
@@ -47,21 +61,150 @@ import {
   TOTP_SETUP_DATA,
   TOTP_STATUS_DATA,
 } from '../common/swagger/sop-data-samples';
+import { withDemoScope } from '../common/store/demo-scope';
 
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly microsoftAuth: MicrosoftAuthService,
+  ) {}
+
+  @Get('microsoft/status')
+  @ApiOperation({
+    summary: 'Whether Microsoft sign-in is configured',
+    description: howWhy({
+      why: 'Show or hide the Sign in with Microsoft button.',
+      how: 'GET → `{ configured, enabled, allowedEmailDomains }`. Default allows every `@aceolution.*` domain.',
+    }),
+  })
+  @ApiSopResponses({
+    successData: {
+      configured: true,
+      enabled: true,
+      allowedEmailDomain: 'aceolution.*',
+      allowedEmailDomains: ['aceolution.*'],
+      azureAdGroupRoles: false,
+    },
+    auth: false,
+  })
+  microsoftStatus() {
+    return this.microsoftAuth.status();
+  }
+
+  @Get('microsoft/login')
+  @ApiOperation({
+    summary: 'Start Microsoft sign-in',
+    description: howWhy({
+      why: 'Company Microsoft / Entra login (same pattern as ACE Outsource).',
+      how: 'Browser GET → 302 to login.microsoftonline.com. After success Microsoft returns to /auth/microsoft/callback.',
+    }),
+  })
+  microsoftLogin(@Res() res: Response) {
+    try {
+      const { url } = this.microsoftAuth.buildAuthorizeUrl();
+      return res.redirect(HttpStatus.FOUND, url);
+    } catch (err: any) {
+      const frontend = this.microsoftAuth.frontendUrl();
+      const message =
+        err?.message ||
+        'Microsoft login is not configured. Ask an admin to set Azure app credentials.';
+      return res.redirect(
+        HttpStatus.FOUND,
+        `${frontend}/login/?ms_error=${encodeURIComponent(message)}`,
+      );
+    }
+  }
+
+  @Get('microsoft/callback')
+  @ApiOperation({
+    summary: 'Microsoft OAuth callback',
+    description: howWhy({
+      why: 'Finish Microsoft sign-in and open the Ace Finance dashboard.',
+      how: 'Microsoft redirects here with `code` + `state`. Backend issues the app JWT and redirects to the web login page with tokens in the URL **hash** (not query) so proxies/logs do not capture them.',
+    }),
+  })
+  async microsoftCallback(
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Query('error') error: string,
+    @Query('error_description') errorDescription: string,
+    @Res() res: Response,
+  ) {
+    const frontend = this.microsoftAuth.frontendUrl();
+    const fail = (message: string) =>
+      res.redirect(
+        HttpStatus.FOUND,
+        `${frontend}/login/?ms_error=${encodeURIComponent(message)}`,
+      );
+
+    if (error) {
+      return fail(errorDescription || error);
+    }
+    if (!code || !state) {
+      return fail('Microsoft did not return a login code.');
+    }
+
+    try {
+      // Resolve Microsoft user in live DB; dual-store users then pick Live or Demo.
+      const session = await withDemoScope(false, async () => {
+        const user = await this.microsoftAuth.handleCallback(code, state);
+        return this.authService.issueMicrosoftSession(user);
+      });
+      if (
+        session &&
+        typeof session === 'object' &&
+        'requiresWorkspaceChoice' in session &&
+        (session as { requiresWorkspaceChoice?: boolean }).requiresWorkspaceChoice
+      ) {
+        const choice = session as {
+          workspaceToken: string;
+          name?: string;
+          emailHint?: string;
+          workspaces?: Array<{ id: string; role?: string }>;
+        };
+        const params = new URLSearchParams({
+          ms_workspace: choice.workspaceToken,
+        });
+        if (choice.name) params.set('ms_name', choice.name);
+        if (choice.emailHint) params.set('ms_email', choice.emailHint);
+        const liveRole = choice.workspaces?.find((w) => w.id === 'live')?.role;
+        const demoRole = choice.workspaces?.find((w) => w.id === 'demo')?.role;
+        if (liveRole) params.set('ms_live_role', liveRole);
+        if (demoRole) params.set('ms_demo_role', demoRole);
+        // Hash fragment is not sent to servers / access logs
+        return res.redirect(
+          HttpStatus.FOUND,
+          `${frontend}/login/#${params.toString()}`,
+        );
+      }
+      const accessToken = (session as { access_token?: string }).access_token;
+      if (!accessToken) {
+        return fail('Microsoft sign-in did not return a session. Try again.');
+      }
+      return res.redirect(
+        HttpStatus.FOUND,
+        `${frontend}/login/#ms_token=${encodeURIComponent(accessToken)}`,
+      );
+    } catch (err: any) {
+      const message =
+        typeof err?.message === 'string' && err.message.length < 180
+          ? err.message
+          : 'Microsoft sign-in failed. Try again.';
+      return fail(message);
+    }
+  }
 
   @Post('login')
   @ApiOperation({
     summary: 'Login with email and password',
     description: howWhy({
-      why: 'Start every session — get the JWT used by all protected APIs.',
-      how: 'POST `{ email, password }` → copy `access_token` → Swagger **Authorize** (Bearer).',
-      when: 'App launch / before any dashboard screen.',
+      why: 'Password path (admin / no Microsoft). Company staff should prefer Microsoft SSO.',
+      how: 'POST `{ email, password }` → `access_token` (Swagger **Authorize**), or 2FA challenge, or workspace choice.',
+      when: 'Login → Use password instead.',
       extras:
-        'Accounts with 2FA return `{ requires2fa: true, challengeToken }` instead — then call `POST /auth/verify-2fa`. Pick a password-only demo account from the **Examples** dropdown.',
+        '**2FA:** `{ requires2fa, challengeToken }` → `POST /auth/verify-2fa`.\n**Dual-store:** `{ requiresWorkspaceChoice, workspaceToken, workspaces[] }` (role per store) → `POST /auth/select-workspace`.\n**Blocked:** Microsoft-linked accounts and Demo Access personas must not use this path.\nPrefer `GET /auth/demo-accounts` + `POST /auth/demo-login` for training.',
     }),
   })
   @ApiBody({ type: LoginDto, examples: LOGIN_EXAMPLES })
@@ -75,6 +218,110 @@ export class AuthController {
   })
   async login(@Body() body: LoginDto) {
     return this.authService.login(body.email, body.password);
+  }
+
+  @Post('verify-demo-access')
+  @ApiOperation({
+    summary: 'Verify demo-guide access code (server-side)',
+    description: howWhy({
+      why: 'Unlock /demo-guide without baking the code into the frontend bundle.',
+      how: 'POST `{ accessCode }` → `{ ok: true }` when it matches DEMO_ACCESS_CODE.',
+    }),
+  })
+  @ApiBody({ type: VerifyDemoAccessDto })
+  @ApiSopResponses({
+    successStatus: 201,
+    successData: { ok: true },
+    auth: false,
+  })
+  async verifyDemoAccess(@Body() body: VerifyDemoAccessDto) {
+    assertDemoAccessCode(body?.accessCode);
+    return { ok: true };
+  }
+
+  @Get('demo-accounts')
+  @ApiOperation({
+    summary: 'List Demo Access personas (dynamic)',
+    description: howWhy({
+      why: 'Login Demo Access picker shows every active isDemo user in the demo database.',
+      how: 'GET with `X-Demo-Access-Code` (when DEMO_ACCESS_CODE is set) → `[{ id, name, email, role, assignedProjects }]`.',
+    }),
+  })
+  @ApiHeader({
+    name: 'X-Demo-Access-Code',
+    required: false,
+    description: 'Required when DEMO_ACCESS_CODE is configured on the API',
+  })
+  @ApiSopResponses({
+    successData: [
+      {
+        id: '66f1a2b3c4d5e6f7a89b0c1d',
+        name: 'Requester GAC',
+        email: 'requester.gac@acefinance.com',
+        role: 'REQUESTER',
+        assignedProjects: ['Google Art and culture (GAC)'],
+      },
+    ],
+    auth: false,
+  })
+  async demoAccounts(@Headers('x-demo-access-code') headerCode?: string) {
+    assertDemoAccessCode(readDemoAccessCode({ header: headerCode }));
+    return this.authService.listDemoAccounts();
+  }
+
+  @Post('demo-login')
+  @ApiOperation({
+    summary: 'Demo Access login (demo database only)',
+    description: howWhy({
+      why: 'Client demos / training without touching live company data.',
+      how: 'POST `{ email, password }` + demo access code (header or body) for an active isDemo user → JWT with `store: "demo"`.',
+      when: 'Login page → Demo Access.',
+    }),
+  })
+  @ApiHeader({
+    name: 'X-Demo-Access-Code',
+    required: false,
+    description: 'Required when DEMO_ACCESS_CODE is configured on the API',
+  })
+  @ApiBody({ type: DemoLoginDto })
+  @ApiSopResponses({
+    successStatus: 201,
+    successData: LOGIN_DATA,
+    successDescription: 'Signed into the demo store (isDemo persona).',
+    auth: 'Not a demo persona / inactive / bad access code / bad password',
+  })
+  async demoLogin(
+    @Body() body: DemoLoginDto,
+    @Headers('x-demo-access-code') headerCode?: string,
+  ) {
+    assertDemoAccessCode(
+      readDemoAccessCode({
+        header: headerCode,
+        bodyCode: body.accessCode,
+      }),
+    );
+    return this.authService.demoLogin(body.email, body.password);
+  }
+
+  @Post('select-workspace')
+  @ApiOperation({
+    summary: 'Choose Live or Demo workspace (dual-store accounts)',
+    description: howWhy({
+      why: 'Same email can exist in Live and Demo with different roles — user picks which workspace to open.',
+      how: 'After login / Microsoft returns `requiresWorkspaceChoice` / `ms_workspace`, POST `{ workspaceToken, store: "live"|"demo" }` → access token. Each option includes the role in that store.',
+      when: 'Email exists in both databases (or Live ADMIN opening Demo for the first time).',
+    }),
+  })
+  @ApiBody({ type: SelectWorkspaceDto })
+  @ApiSopResponses({
+    successStatus: 201,
+    successData: LOGIN_DATA,
+    successDescription: 'Signed into the chosen store (live or demo).',
+    auth: 'Invalid or expired workspaceToken',
+    badRequest: 'Choose live or demo workspace.',
+  })
+  async selectWorkspace(@Body() body: SelectWorkspaceDto) {
+    return this.authService.selectWorkspace(body.workspaceToken, body.store);
   }
 
   @Post('verify-2fa')
@@ -363,14 +610,19 @@ export class AuthController {
     return this.authService.validateResetToken(token);
   }
 
-  // One-time seed endpoint — creates admin account if no users exist
+  // Bootstrap seed — requires X-Seed-Secret matching SEED_SECRET
   @Post('seed')
   @ApiOperation({
     summary: 'Seed admin, categories, countries and demo users',
     description: howWhy({
       why: 'Bootstrap an empty database.',
-      how: 'POST once on a fresh database. Safe to repeat — existing records are skipped.',
+      how: 'POST with header `X-Seed-Secret: <SEED_SECRET>`. Safe to repeat — existing records are skipped. Disabled when SEED_SECRET is unset.',
     }),
+  })
+  @ApiHeader({
+    name: 'X-Seed-Secret',
+    required: true,
+    description: 'Must match API env SEED_SECRET',
   })
   @ApiSopResponses({
     successStatus: 201,
@@ -380,7 +632,8 @@ export class AuthController {
     },
     auth: false,
   })
-  async seed() {
+  async seed(@Headers('x-seed-secret') seedSecret?: string) {
+    assertSeedSecret(seedSecret);
     return this.authService.seed();
   }
 }

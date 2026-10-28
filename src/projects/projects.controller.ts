@@ -30,16 +30,18 @@ const NOT_FOUND = `Project ${PROJECT_ROW._id} not found`;
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
-  // Public — expense form & dashboard edit dropdowns
+  // Authenticated — expense form & dashboard edit dropdowns
   @Get('active')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Active projects (public)',
+    summary: 'Active projects',
     description: howWhy({
       why: 'Project dropdown on the expense form and dashboard edit.',
-      how: 'GET (no auth) → send the project `name` on POST /expenses.',
+      how: 'GET (Bearer) → send the project `name` on POST /expenses.',
     }),
   })
-  @ApiSopResponses({ successData: [PROJECT_ROW], auth: false })
+  @ApiSopResponses({ successData: [PROJECT_ROW], auth: true })
   async findActive() {
     return this.projectsService.findActive();
   }

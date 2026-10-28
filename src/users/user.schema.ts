@@ -13,8 +13,16 @@ export class User {
   @Prop({ required: true, unique: true, lowercase: true })
   email!: string;
 
+  /**
+   * bcrypt hash. Required for password login. Microsoft-only users get a
+   * random unusable hash so password login stays blocked until an admin sets one.
+   */
   @Prop({ required: true })
   password!: string;
+
+  /** Microsoft Entra object id when the user has signed in with Microsoft. */
+  @Prop({ index: true, sparse: true })
+  microsoftId?: string;
 
   @Prop({
     required: true,

@@ -13,16 +13,17 @@ NestJS API for Aceolution Finance: expense spend management, auth (JWT + 2FA), u
 
 ## Features
 
-- Auth: login, email OTP, optional TOTP authenticator, password change / forgot / reset, welcome emails
+- Auth: Microsoft Entra SSO, password + email OTP / TOTP, Demo Access, Live/Demo workspace choice, password change / forgot / reset (password accounts), welcome emails
+- **Live vs Demo stores:** separate MongoDB DBs (`ace_finance` / `ace_finance_demo`) + Azure containers; JWT `store` claim routes every request
 - Expense workflow: submit → approver approve/reject/request-changes → processor pay / partial-pay / reject
 - Role-scoped data: `REQUESTER` | `APPROVER` | `PROCESSOR` | `ADMIN`
 - **Project assignment:** Requester and Approver must have one or more `assignedProjects` (Admin create/edit). Requesters submit only those projects; Approvers only see/act on (and get emails / due-soon reminders for) expenses in their assigned projects. Admin and Processor are not project-scoped.
-- **Demo users:** seeded `@acefinance.com` personas (`isDemo`) are password-only (no Email OTP / Authenticator) for easy project demos; media demo accounts may still use OTP + TOTP
+- **Demo Access:** dynamic `GET /auth/demo-accounts` + `POST /auth/demo-login` for active `isDemo` users in the demo DB (Admin toggles in Demo workspace → Users)
 - Admin: users, categories, projects, countries
 - FX conversion helpers
-- File storage under Azure Blob folders `invoices` and `receipts`
-- Demo seed: `POST /auth/seed` (and boot seed for demo staff)
-- Health: `GET /` and `GET /health`
+- File storage under Azure Blob folders `invoices` and `receipts` (live vs demo containers)
+- Demo seed: `POST /auth/seed` (and boot seed for both stores)
+- Health: `GET /` and `GET /health` (reports live + demo Mongo)
 - Dashboard filtering (client-side): Project + `submittedAt` date range (From/To)
 - In-app notifications per user (same audience as workflow emails), with unread count API — frontend bell may be temporarily hidden while APIs remain available
 
@@ -38,12 +39,17 @@ cp .env.example .env
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MONGODB_URI` | Yes | MongoDB Atlas URI (include `/ace_finance` database name) |
+| `MONGODB_URI` | Yes | Live MongoDB Atlas URI (database `ace_finance`) |
+| `MONGODB_URI_DEMO` | Recommended | Demo MongoDB URI (database `ace_finance_demo`; same cluster OK) |
 | `JWT_SECRET` | Yes | Long random secret for JWT signing |
 | `PORT` | No | Default `3001` |
-| `FRONTEND_URL` | Yes | Frontend origin for CORS + email links (e.g. `http://localhost:3000`) |
+| `FRONTEND_URL` | Yes | Frontend origin for CORS + email + Microsoft redirects (e.g. `http://localhost:3000`) |
 | `AZURE_STORAGE_CONNECTION_STRING` | Yes | Storage account connection string |
-| `AZURE_STORAGE_CONTAINER` | Yes | Blob container name (e.g. `ace-finance-files`) |
+| `AZURE_STORAGE_CONTAINER` | Yes | Live blob container (e.g. `ace-finance-files`) |
+| `AZURE_STORAGE_CONTAINER_DEMO` | Recommended | Demo blob container (e.g. `ace-finance-files-demo`) |
+| `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | For Microsoft login | Entra app registration |
+| `AZURE_REDIRECT_URI` | For Microsoft login | Must match Entra redirect, e.g. `…/auth/microsoft/callback` |
+| `ALLOWED_EMAIL_DOMAIN` | Optional | Default `*aceolution*` for new Microsoft users |
 | `AZURE_COMMUNICATION_CONNECTION_STRING` | Recommended | ACS connection string (`endpoint=…;accesskey=…`) |
 | `AZURE_EMAIL_SENDER` | With ACS | Verified sender, e.g. `DoNotReply@….azurecomm.net` |
 | `SMTP_*` | Optional | Gmail/SMTP fallback when Azure Email is not set |
@@ -89,6 +95,12 @@ API base: `http://localhost:3001`
 
 ## Related
 
-- Frontend: sibling repo / folder `ace_finance_frontend`
+- Frontend: sibling folder `ace_finance_frontend` (separate git remote)
+- **Architecture (committed in this repo — safe if you only keep the backend clone):**
+  - [Index](./docs/Architecture/README.md)
+  - [Full system architecture](./docs/Architecture/aceolution_finance_architecture.md)
+  - [Auth + Live/Demo stores + VAPT](./docs/Architecture/AUTH_LIVE_DEMO_STORES.md)
+  - [Architecture PDF](./docs/Architecture/Aceolution_Finance_Architecture.pdf)
+- Same docs are also in `ace_finance_frontend/docs/Architecture/` (keep both in sync)
 - Live backend: https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net/
 - Live frontend: https://finance.aceolution.com/

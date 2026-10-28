@@ -23,16 +23,18 @@ set BASE_URL=http://localhost:3001
 set BASE_URL=https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net
 ```
 
-Logins used (seeded demo accounts):
+Logins used (seeded accounts):
 
-| Role | Email | Password |
-|------|-------|----------|
-| ADMIN | `finance@aceolution.com` | `Admin@1234` |
-| REQUESTER | `requester.gac@acefinance.com` | `Requester@1234` |
-| APPROVER | `approver.media@acefinance.com` | `Approver@1234` |
-| PROCESSOR | `alisha.processor@acefinance.com` | `Processor@1234` |
+| Role | Email | Password / path |
+|------|-------|-----------------|
+| ADMIN | `finance@aceolution.com` | `Admin@1234` (may return workspace choice → Live/Demo) |
+| REQUESTER | `requester.gac@acefinance.com` | Prefer **Demo Access** `POST /auth/demo-login` `{ email }` (demo store) |
+| APPROVER | `approver.media@acefinance.com` | Prefer Demo Access login |
+| PROCESSOR | `alisha.processor@acefinance.com` | Prefer Demo Access login |
 
-Write scenarios submit expenses on project `Google Art and culture (GAC)` (requester must stay assigned to it).
+Also in Postman **Authentication**: Microsoft status, List Demo Access accounts, Demo Access login, Select workspace, Check duplicate (Expenses).
+
+Write scenarios submit expenses on project `Google Art and culture (GAC)` (requester must stay assigned to it). Duplicate invoice # / same file → hard 400 (not created).
 
 ## Emails during API tests (important)
 

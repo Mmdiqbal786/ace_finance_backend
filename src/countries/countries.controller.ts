@@ -31,14 +31,16 @@ export class CountriesController {
   constructor(private readonly countriesService: CountriesService) {}
 
   @Get('active')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Active countries with currency (public)',
+    summary: 'Active countries with currency',
     description: howWhy({
       why: 'Country dropdown — its `currency` drives the USD conversion.',
-      how: 'GET (no auth) → send the country `name` on POST /expenses; use `currency` for GET /fx/convert.',
+      how: 'GET (Bearer) → send the country `name` on POST /expenses; use `currency` for GET /fx/convert.',
     }),
   })
-  @ApiSopResponses({ successData: [COUNTRY_ROW], auth: false })
+  @ApiSopResponses({ successData: [COUNTRY_ROW], auth: true })
   async findActive() {
     return this.countriesService.findActive();
   }

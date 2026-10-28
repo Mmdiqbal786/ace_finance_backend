@@ -33,8 +33,10 @@ import { ExpensesService } from './expenses.service';
 import { attachmentMulterOptions } from './attachment-upload';
 import { StorageService } from '../storage/storage.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
+import type { ActingUser } from './expenses.service';
 import {
   CreateExpenseDto,
   ExpenseNotesDto,
@@ -73,19 +75,33 @@ export class ExpensesController {
     private readonly storageService: StorageService,
   ) {}
 
-  // Public — multipart form with required invoice file
+  private actingUserFromReq(req: any): ActingUser {
+    return {
+      userId: req.user.userId,
+      name: req.user.name,
+      email: req.user.email,
+      role: req.user.role,
+      assignedProjects: Array.isArray(req.user.assignedProjects)
+        ? req.user.assignedProjects
+        : [],
+    };
+  }
+
+  // Authenticated submit — multipart with required invoice file
   @Post()
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @UseInterceptors(
     FileInterceptor('invoice', attachmentMulterOptions('invoice')),
   )
   @ApiOperation({
-    summary: 'Submit expense request (public, multipart)',
+    summary: 'Submit expense request (authenticated, multipart)',
     description: howWhy({
       why: 'Requester raises a new expense with its invoice.',
-      how: '`multipart/form-data` with the fields below + file field `invoice` (PDF / JPG / PNG / WEBP / GIF, max 5 MB). Server converts `originalAmount` to USD and emails the project approvers.',
-      when: 'Request form → Submit. Save the returned `id` for tracking.',
+      how: 'Bearer JWT + `multipart/form-data` with file field `invoice` (PDF / JPG / PNG / WEBP / GIF, max 5 MB). Requester email/name are taken from the token (body email is ignored).',
+      when: 'Dashboard → Submit expense.',
       extras:
-        '**Required:** requesterName, requesterEmail, originalAmount, country, category, project, description, date, dueDate, invoice. **Optional:** invoiceNumber, invoiceDate. `dueDate` must be on/after `date`.',
+        '**Required:** originalAmount, country, category, project, description, date, dueDate, invoice. **Optional:** invoiceNumber, invoiceDate, `duplicateConfirmed`.\n**Hard duplicate** (same file SHA-256 / invoice #): HTTP 400 — request is **not created**.\n**Potential duplicate**: 400 with `POTENTIAL_DUPLICATE:…` unless `duplicateConfirmed=true`.',
     }),
   })
   @ApiConsumes('multipart/form-data')
@@ -93,7 +109,7 @@ export class ExpensesController {
   @ApiSopResponses({
     successStatus: 201,
     successData: EXPENSE_PENDING,
-    auth: false,
+    auth: true,
     badRequest: 'Invoice attachment is required.',
     forbidden:
       'You are not assigned to project "Google News Lab (GNL)". Contact an administrator.',
@@ -101,10 +117,13 @@ export class ExpensesController {
   async create(
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body() body: Omit<CreateExpenseDto, 'invoice'>,
+    @Request() req: any,
   ) {
     if (!file) {
       throw new BadRequestException('Invoice attachment is required.');
     }
+
+    const actingUser = this.actingUserFromReq(req);
 
     const fileHash = crypto
       .createHash('sha256')
@@ -147,51 +166,74 @@ export class ExpensesController {
       }
     }
 
+    // ACL + catalogs + dates before any Azure write
+    await this.expensesService.assertCanCreateExpense(
+      {
+        category: body.category,
+        project: body.project,
+        country: body.country,
+        date: body.date,
+        dueDate: body.dueDate,
+        originalAmount: Number(body.originalAmount),
+      },
+      actingUser,
+    );
+
     const expenseId = this.expensesService.generateExpenseId();
     const stored = await this.storageService.saveAttachment('invoices', file, {
       expenseId,
       kind: 'invoice',
     });
 
-    return this.expensesService.create(
-      {
-        requesterName: body.requesterName,
-        requesterEmail: body.requesterEmail,
-        originalAmount: Number(body.originalAmount),
-        country: body.country,
-        category: body.category,
-        project: body.project,
-        description: body.description,
-        date: body.date,
-        dueDate: body.dueDate,
-        invoiceNumber: body.invoiceNumber?.trim() || undefined,
-        invoiceDate: body.invoiceDate || undefined,
-        id: expenseId,
-        duplicateConfirmed,
-        idempotencyKey: body.idempotencyKey,
-      },
-      {
-        fileName: stored.fileName,
-        originalName: stored.originalName,
-        mimeType: stored.mimeType,
-        size: stored.size,
-        fileHash,
-        extractedInvoiceNumber: parsedDoc.invoiceNumber,
-        extractedInvoiceDate: parsedDoc.invoiceDate,
-        extractedAmount: parsedDoc.amount,
-        extractedCurrency: parsedDoc.currency,
-        extractedVendor: parsedDoc.vendor,
-        parseMethod: parsedDoc.parseMethod,
-      },
-    );
+    try {
+      return await this.expensesService.create(
+        {
+          requesterName: body.requesterName || actingUser.name,
+          requesterEmail: actingUser.email,
+          originalAmount: Number(body.originalAmount),
+          country: body.country,
+          category: body.category,
+          project: body.project,
+          description: body.description,
+          date: body.date,
+          dueDate: body.dueDate,
+          invoiceNumber: body.invoiceNumber?.trim() || undefined,
+          invoiceDate: body.invoiceDate || undefined,
+          id: expenseId,
+          duplicateConfirmed,
+          idempotencyKey: body.idempotencyKey,
+        },
+        {
+          fileName: stored.fileName,
+          originalName: stored.originalName,
+          mimeType: stored.mimeType,
+          size: stored.size,
+          fileHash,
+          extractedInvoiceNumber: parsedDoc.invoiceNumber,
+          extractedInvoiceDate: parsedDoc.invoiceDate,
+          extractedAmount: parsedDoc.amount,
+          extractedCurrency: parsedDoc.currency,
+          extractedVendor: parsedDoc.vendor,
+          parseMethod: parsedDoc.parseMethod,
+        },
+        actingUser,
+      );
+    } catch (err) {
+      // create() deletes the blob on Mongo save failure; this covers throws before save
+      // (duplicate race, etc.). Safe to call again (deleteIfExists).
+      await this.storageService.deleteAttachment('invoices', stored.fileName);
+      throw err;
+    }
   }
 
   @Post('parse-invoice')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @UseInterceptors(FileInterceptor('file', attachmentMulterOptions('invoice')))
   @ApiOperation({
     summary: 'Parse invoice document via local OCR / PDF Parse (Zero AI)',
     description:
-      'Extracts invoice number, date, amount, currency, and vendor directly from the uploaded PDF or image using local pdf-parse and Tesseract OCR.',
+      'Extracts invoice number, date, amount, currency, and vendor directly from the uploaded PDF or image using local pdf-parse and Tesseract OCR. Requires Bearer JWT.',
   })
   @ApiConsumes('multipart/form-data')
   async parseInvoice(@UploadedFile() file: Express.Multer.File | undefined) {
@@ -219,8 +261,17 @@ export class ExpensesController {
   }
 
   @Get('check-duplicate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Pre-flight check for duplicate and potential duplicate expenses',
+    description: howWhy({
+      why: 'Validate before upload / confirm UI — same rules as submit hard block + soft warning.',
+      how: 'GET (Bearer) query: `invoiceNumber`, `fileHash`, `project`, `category`, `amount`, `currency`, `country`, `date`, `excludeExpenseId`.',
+      when: 'Submit form live validation, or Postman before multipart submit.',
+      extras:
+        'Hard = same invoice file / number (blocked). Soft = fuzzy triple project+category+amount ±1 day (confirm to proceed). Rejected expenses are excluded.',
+    }),
   })
   async checkDuplicate(
     @Query('invoiceNumber') invoiceNumber?: string,
@@ -337,9 +388,13 @@ export class ExpensesController {
   @ApiStandardErrors({ notFound: 'No invoice attached to this expense.' })
   async getInvoice(
     @Param('id') id: string,
+    @Request() req: any,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
-    const invoice = await this.expensesService.getInvoiceFile(id);
+    const invoice = await this.expensesService.getInvoiceFile(
+      id,
+      this.actingUserFromReq(req),
+    );
     res.set({
       'Content-Type': invoice.mimeType,
       'Content-Disposition': `inline; filename="${invoice.originalName.replace(/"/g, '')}"`,
@@ -355,7 +410,7 @@ export class ExpensesController {
     summary: 'View / download a payment receipt',
     description: howWhy({
       why: 'Open a processor receipt from the payment history.',
-      how: 'GET with Bearer. `fileName` = `paymentReceipts[].fileName` from the expense.',
+      how: 'GET with Bearer. `fileName` = `paymentReceipts[].fileName` from the expense. Caller must own the expense or be staff for that project.',
     }),
   })
   @ApiProduces('application/pdf', 'image/*')
@@ -363,11 +418,13 @@ export class ExpensesController {
   async getPaymentReceipt(
     @Param('id') id: string,
     @Param('fileName') fileName: string,
+    @Request() req: any,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const receipt = await this.expensesService.getPaymentReceiptFile(
       id,
       fileName,
+      this.actingUserFromReq(req),
     );
     res.set({
       'Content-Type': receipt.mimeType,
@@ -376,13 +433,15 @@ export class ExpensesController {
     return new StreamableFile(Readable.from(receipt.buffer));
   }
 
-  // Public — allow status tracking by ID
+  // Public track (redacted) — full record when signed-in viewer has access
   @Get(':id')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Track an expense by ID (public)',
+    summary: 'Track an expense by ID',
     description: howWhy({
-      why: 'Public "Track request" page and request detail.',
-      how: 'GET `/expenses/EXP-…` (no auth) → full expense incl. `history` timeline.',
+      why: 'Status tracking and request detail.',
+      how: 'Without auth → redacted public summary (no file names / hashes / receipts). With Bearer and access → full expense.',
     }),
   })
   @ApiSopResponses({
@@ -390,8 +449,9 @@ export class ExpensesController {
     auth: false,
     notFound: EXPENSE_NOT_FOUND,
   })
-  async findOne(@Param('id') id: string) {
-    return this.expensesService.findOne(id);
+  async findOne(@Param('id') id: string, @Request() req: any) {
+    const acting = req.user?.email ? this.actingUserFromReq(req) : null;
+    return this.expensesService.findOneForViewer(id, acting);
   }
 
   // APPROVER or ADMIN only
@@ -692,6 +752,10 @@ export class ExpensesController {
       throw new BadRequestException('Invoice attachment is required.');
     }
 
+    const actingUser = this.actingUserFromReq(req);
+    // ACL before any Azure write
+    await this.expensesService.assertCanReplaceInvoice(id, actingUser);
+
     const fileHash = crypto
       .createHash('sha256')
       .update(file.buffer)
@@ -716,7 +780,7 @@ export class ExpensesController {
         size: stored.size,
         fileHash,
       },
-      req.user,
+      actingUser,
     );
   }
 

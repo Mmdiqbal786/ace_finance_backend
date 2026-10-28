@@ -30,7 +30,37 @@ async function bootstrap() {
     prefix: '/api/docs/assets',
     index: false,
   });
-  app.enableCors();
+  const frontendOrigin = (
+    process.env.FRONTEND_URL || 'http://localhost:3000'
+  )
+    .trim()
+    .replace(/\/$/, '');
+  const extraOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  const corsOrigins = Array.from(
+    new Set([
+      frontendOrigin,
+      ...extraOrigins,
+      // Localhost only outside production (or when FRONTEND_URL is already local)
+      ...(process.env.NODE_ENV !== 'production' ||
+      frontendOrigin.startsWith('http://localhost')
+        ? ['http://localhost:3000']
+        : []),
+    ]),
+  );
+  app.enableCors({
+    origin: corsOrigins,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Demo-Access-Code',
+      'X-Seed-Secret',
+    ],
+  });
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Aceolution Finance API')
@@ -72,15 +102,25 @@ async function bootstrap() {
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   setOpenApiDocument(document);
-  // JSON only at /api/docs-json — the branded UI page is AppController GET /api/docs
-  SwaggerModule.setup('api/docs', app, document, {
-    ui: false,
-    raw: ['json'],
-  });
+  // Docs enabled locally by default; production requires ENABLE_API_DOCS=true
+  const docsEnabled =
+    process.env.ENABLE_API_DOCS === 'true' ||
+    process.env.NODE_ENV !== 'production';
+  if (docsEnabled) {
+    // JSON only at /api/docs-json — the branded UI page is AppController GET /api/docs
+    SwaggerModule.setup('api/docs', app, document, {
+      ui: false,
+      raw: ['json'],
+    });
+  }
 
   const port = process.env.PORT ?? 3001;
   await app.listen(port, '0.0.0.0');
   console.log(`Aceolution Finance API listening on port ${port}`);
-  console.log(`Swagger docs at http://localhost:${port}/api/docs`);
+  if (docsEnabled) {
+    console.log(`Swagger docs at http://localhost:${port}/api/docs`);
+  } else {
+    console.log('API docs disabled (set ENABLE_API_DOCS=true to enable)');
+  }
 }
 void bootstrap();

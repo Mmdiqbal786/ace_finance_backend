@@ -1,9 +1,7 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ExpensesController } from './expenses.controller';
 import { ExpensesService } from './expenses.service';
 import { ExpensesScheduler } from './expenses.scheduler';
-import { Expense, ExpenseSchema } from './expense.schema';
 import { CategoriesModule } from '../categories/categories.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { CountriesModule } from '../countries/countries.module';
@@ -17,7 +15,6 @@ import { InvoiceParseService } from './invoice-parse.service';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Expense.name, schema: ExpenseSchema }]),
     CategoriesModule,
     ProjectsModule,
     CountriesModule,

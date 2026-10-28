@@ -6,9 +6,9 @@ import {
   OnModuleInit,
   Logger,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Project, ProjectDocument } from './project.schema';
+import { ProjectDocument } from './project.schema';
+import { StoreModelsService } from '../common/store/store-models.service';
+import { withDemoScope } from '../common/store/demo-scope';
 
 const PROJECT_CODE_PREFIX = 'ACE-PR-';
 const PROJECT_CODE_PAD = 6;
@@ -32,20 +32,28 @@ export const REQUIRED_PROJECT_NAMES = [
 export class ProjectsService implements OnModuleInit {
   private readonly logger = new Logger(ProjectsService.name);
 
-  constructor(
-    @InjectModel(Project.name) private projectModel: Model<ProjectDocument>,
-  ) {}
+  constructor(private readonly store: StoreModelsService) {}
+
+  private get projectModel() {
+    return this.store.projects();
+  }
 
   async onModuleInit() {
-    await this.ensureUniqueProjectCodes();
-    await this.ensureRequiredProjects();
-    try {
-      await this.projectModel.collection.createIndex(
-        { code: 1 },
-        { unique: true },
-      );
-    } catch (err: any) {
-      this.logger.warn(`Project code unique index: ${err?.message || err}`);
+    for (const demo of [false, true]) {
+      await withDemoScope(demo, async () => {
+        await this.ensureUniqueProjectCodes();
+        await this.ensureRequiredProjects();
+        try {
+          await this.projectModel.collection.createIndex(
+            { code: 1 },
+            { unique: true },
+          );
+        } catch (err: any) {
+          this.logger.warn(
+            `Project code unique index (${demo ? 'demo' : 'live'}): ${err?.message || err}`,
+          );
+        }
+      });
     }
   }
 

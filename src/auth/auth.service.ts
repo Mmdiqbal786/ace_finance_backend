@@ -13,6 +13,7 @@ import { CategoriesService } from '../categories/categories.service';
 import { CountriesService } from '../countries/countries.service';
 import { MailService } from '../mail/mail.service';
 import { UserDocument } from '../users/user.schema';
+import { currentDemo, withDemoScope } from '../common/store/demo-scope';
 
 type TwoFactorMethod = 'email' | 'totp';
 
@@ -31,6 +32,12 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('Invalid email or password');
     if (!user.isActive)
       throw new UnauthorizedException('Your account has been deactivated');
+    // Microsoft-linked accounts must use Sign in with Microsoft (no password bypass).
+    if (user.microsoftId) {
+      throw new UnauthorizedException(
+        'This account uses Microsoft sign-in. Use Sign in with Microsoft on the login page.',
+      );
+    }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) throw new UnauthorizedException('Invalid email or password');
     return user;
@@ -52,6 +59,10 @@ export class AuthService {
     if (user.isDemo) {
       return [];
     }
+    // Microsoft-linked: company Microsoft MFA already covers 2-step — no Ace OTP/TOTP.
+    if (user.microsoftId) {
+      return [];
+    }
     // Admin: no email OTP. Authenticator only if they opted in.
     if (user.role === 'ADMIN') {
       return user.totpEnabled && user.totpSecret ? ['totp'] : [];
@@ -66,16 +77,25 @@ export class AuthService {
 
   /** Non-admin users must enroll authenticator before using the dashboard. */
   private mustSetupTotp(user: UserDocument): boolean {
-    if (user.role === 'ADMIN' || user.isDemo) return false;
+    if (user.role === 'ADMIN' || user.isDemo || user.microsoftId) return false;
     return !(user.totpEnabled && user.totpSecret);
   }
 
-  private issueAccessToken(user: UserDocument) {
+  private issueAccessToken(
+    user: UserDocument,
+    options?: { skipTotpRequirement?: boolean },
+  ) {
     const mustChangePassword = Boolean(user.mustChangePassword);
-    const mustSetupTotp = this.mustSetupTotp(user);
+    // Microsoft SSO: company MFA already done — do not force Ace authenticator.
+    const mustSetupTotp = options?.skipTotpRequirement
+      ? false
+      : this.mustSetupTotp(user);
     const assignedProjects = Array.isArray(user.assignedProjects)
       ? user.assignedProjects
       : [];
+    const microsoftLinked = Boolean(user.microsoftId);
+    const isDemo = Boolean(user.isDemo);
+    const store = currentDemo() ? 'demo' : 'live';
     const payload = {
       sub: user._id.toString(),
       name: user.name,
@@ -85,7 +105,9 @@ export class AuthService {
       mustSetupTotp,
       totpEnabled: Boolean(user.totpEnabled && user.totpSecret),
       assignedProjects,
-      isDemo: Boolean(user.isDemo),
+      isDemo,
+      store,
+      microsoftLinked,
     };
     return {
       access_token: this.jwtService.sign(payload),
@@ -98,9 +120,20 @@ export class AuthService {
         mustSetupTotp,
         totpEnabled: Boolean(user.totpEnabled && user.totpSecret),
         assignedProjects,
-        isDemo: Boolean(user.isDemo),
+        isDemo,
+        store,
+        microsoftLinked,
       },
     };
+  }
+
+  /**
+   * After Microsoft OAuth: company MFA already done.
+   * If the same email exists in Live and Demo (or admin can open Demo),
+   * ask which workspace — and show the role in each.
+   */
+  async issueMicrosoftSession(user: UserDocument) {
+    return this.finishAuthenticatedSession(user, 'microsoft');
   }
 
   private async issueChallenge(user: UserDocument, sendEmail = true) {
@@ -190,27 +223,247 @@ export class AuthService {
     };
   }
 
+  private async findActiveAccountSummary(
+    email: string,
+    demo: boolean,
+  ): Promise<{ role: string; name: string; email: string } | null> {
+    return withDemoScope(demo, async () => {
+      const user = await this.usersService.findByEmail(email);
+      if (!user || !user.isActive) return null;
+      return {
+        role: user.role,
+        name: user.name,
+        email: user.email,
+      };
+    });
+  }
+
   /**
-   * Step 1: password check.
-   * - Non-admin → email OTP challenge
-   * - Admin without authenticator → signed in immediately (no 2FA)
-   * - Admin with authenticator enabled → TOTP challenge only
+   * If this email exists in both Live and Demo (or Live ADMIN can open Demo),
+   * return a workspace picker that includes the role in each store.
+   */
+  private async maybeWorkspaceChoice(
+    user: UserDocument,
+    via: 'password' | 'microsoft',
+  ) {
+    if (user.isDemo) return null;
+
+    const email = user.email.toLowerCase();
+    const live =
+      (await this.findActiveAccountSummary(email, false)) || {
+        role: user.role,
+        name: user.name,
+        email,
+      };
+    const demo = await this.findActiveAccountSummary(email, true);
+    const allowDemoMirror = user.role === 'ADMIN' && !demo;
+
+    if (!demo && !allowDemoMirror) {
+      return null;
+    }
+
+    const workspaces: Array<{
+      id: 'live' | 'demo';
+      label: string;
+      title: string;
+      role: string;
+      description: string;
+    }> = [
+      {
+        id: 'live',
+        label: 'Live',
+        title: 'Live company data',
+        role: live.role,
+        description: `Your role here: ${live.role}. Production expenses, users, and files.`,
+      },
+      {
+        id: 'demo',
+        label: 'Demo',
+        title: 'Demo / training data',
+        role: demo?.role || 'ADMIN',
+        description: demo
+          ? `Your role here: ${demo.role}. Isolated sandbox database and files.`
+          : 'Your role here: ADMIN (demo admin will be created). Isolated sandbox — never touches live.',
+      },
+    ];
+
+    const workspaceToken = this.jwtService.sign(
+      {
+        sub: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        purpose: 'workspace_choice',
+        via,
+        allowDemoMirror,
+        liveRole: live.role,
+        demoRole: demo?.role || (allowDemoMirror ? 'ADMIN' : undefined),
+      },
+      { expiresIn: '10m' },
+    );
+
+    return {
+      requiresWorkspaceChoice: true,
+      workspaceToken,
+      emailHint: this.maskEmail(user.email),
+      name: user.name,
+      via,
+      message:
+        'This account exists in more than one workspace. Choose Live or Demo (your role is shown on each).',
+      workspaces,
+    };
+  }
+
+  private async finishAuthenticatedSession(
+    user: UserDocument,
+    via: 'password' | 'microsoft',
+  ) {
+    const choice = await this.maybeWorkspaceChoice(user, via);
+    if (choice) return choice;
+    return this.issueAccessToken(user, {
+      skipTotpRequirement: via === 'microsoft',
+    });
+  }
+
+  private async finishPasswordSession(user: UserDocument) {
+    return this.finishAuthenticatedSession(user, 'password');
+  }
+
+  /**
+   * Live password login.
+   * - Non-admin → email OTP challenge (then session)
+   * - Admin → optional authenticator, then Live / Demo workspace choice
+   * - Microsoft-linked accounts are rejected (must use Microsoft button)
    */
   async login(email: string, password: string) {
-    const user = await this.validateUser(email, password);
-    const methods = this.availableMethods(user);
-    if (methods.length === 0) {
-      return this.issueAccessToken(user);
+    return withDemoScope(false, async () => {
+      const user = await this.validateUser(email, password);
+      if (user.isDemo) {
+        throw new UnauthorizedException(
+          'Demo personas use Demo Access on the login page (demo database).',
+        );
+      }
+      const methods = this.availableMethods(user);
+      if (methods.length === 0) {
+        return this.finishPasswordSession(user);
+      }
+      return this.issueChallenge(user, true);
+    });
+  }
+
+  /**
+   * After password or Microsoft: open Live or Demo store for dual-store accounts.
+   * Demo admin mirror only when the token allows it (Live ADMIN with no demo row yet).
+   */
+  async selectWorkspace(workspaceToken: string, store: 'live' | 'demo') {
+    if (store !== 'live' && store !== 'demo') {
+      throw new BadRequestException('Choose live or demo workspace.');
     }
-    return this.issueChallenge(user, true);
+    if (!workspaceToken?.trim()) {
+      throw new UnauthorizedException(
+        'Workspace session expired. Please sign in again.',
+      );
+    }
+
+    let payload: {
+      sub?: string;
+      email?: string;
+      name?: string;
+      purpose?: string;
+      via?: string;
+      allowDemoMirror?: boolean;
+    };
+    try {
+      payload = this.jwtService.verify(workspaceToken.trim());
+    } catch {
+      throw new UnauthorizedException(
+        'Workspace session expired. Please sign in again.',
+      );
+    }
+    if (payload.purpose !== 'workspace_choice' || !payload.email) {
+      throw new UnauthorizedException(
+        'Invalid workspace session. Please sign in again.',
+      );
+    }
+
+    const email = String(payload.email).toLowerCase();
+    const name = String(payload.name || email).trim();
+    const viaMicrosoft = payload.via === 'microsoft';
+
+    return withDemoScope(store === 'demo', async () => {
+      let user = await this.usersService.findByEmail(email);
+      if (
+        (!user || !user.isActive) &&
+        store === 'demo' &&
+        payload.allowDemoMirror
+      ) {
+        user = await this.usersService.ensureAdminMirror(email, name);
+      }
+      if (!user || !user.isActive) {
+        throw new UnauthorizedException(
+          store === 'demo'
+            ? 'No active account for this email in the demo workspace.'
+            : 'No active account for this email in the live workspace.',
+        );
+      }
+      return this.issueAccessToken(user, {
+        skipTotpRequirement: viaMicrosoft,
+      });
+    });
+  }
+
+  /** Public list for the login Demo Access picker (demo DB, isDemo only). */
+  async listDemoAccounts() {
+    return withDemoScope(true, () => this.usersService.listDemoAccessAccounts());
+  }
+
+  /**
+   * Demo Access — demo DB only, isDemo personas.
+   * Requires persona password (plus DEMO_ACCESS_CODE on the controller when configured).
+   */
+  async demoLogin(email: string, password?: string) {
+    return withDemoScope(true, async () => {
+      const normalized = email?.trim().toLowerCase();
+      if (!normalized) {
+        throw new BadRequestException('Email is required.');
+      }
+      if (!password?.trim()) {
+        throw new BadRequestException('Password is required for Demo Access.');
+      }
+      const user = await this.usersService.findByEmail(normalized);
+      if (!user || !user.isActive) {
+        throw new UnauthorizedException('Demo account not found or inactive.');
+      }
+      if (!user.isDemo) {
+        throw new UnauthorizedException(
+          'This account is not available via Demo Access. Turn on Demo Access for the user in the demo workspace, or use Microsoft / password sign-in.',
+        );
+      }
+      const isMatch = await bcrypt.compare(password.trim(), user.password);
+      if (!isMatch) {
+        throw new UnauthorizedException('Invalid email or password');
+      }
+      return this.issueAccessToken(user);
+    });
   }
 
   async resendLoginOtp(challengeToken: string) {
-    const { user } = await this.resolveChallengeToken(challengeToken);
-    return this.issueChallenge(user, true);
+    return withDemoScope(false, async () => {
+      const { user } = await this.resolveChallengeToken(challengeToken);
+      return this.issueChallenge(user, true);
+    });
   }
 
   async verifyLogin2fa(params: {
+    challengeToken: string;
+    code: string;
+    method?: TwoFactorMethod;
+  }) {
+    return withDemoScope(false, async () => {
+      return this.verifyLogin2faLive(params);
+    });
+  }
+
+  private async verifyLogin2faLive(params: {
     challengeToken: string;
     code: string;
     method?: TwoFactorMethod;
@@ -252,7 +505,7 @@ export class AuthService {
     }
 
     await this.usersService.clearLoginOtp(user._id.toString());
-    return this.issueAccessToken(user);
+    return this.finishPasswordSession(user);
   }
 
   async getTotpStatus(userId: string, _role: string) {
@@ -260,6 +513,20 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('User not found');
     const enabled = Boolean(user.totpEnabled && user.totpSecret);
     const isDemo = Boolean(user.isDemo);
+    const microsoftLinked = Boolean(user.microsoftId);
+    // Microsoft SSO already uses company MFA — Ace authenticator is not used.
+    if (microsoftLinked) {
+      return {
+        available: false,
+        enabled: false,
+        pendingSetup: false,
+        required: false,
+        canDisable: false,
+        canReplace: false,
+        isDemo: false,
+        microsoftLinked: true,
+      };
+    }
     return {
       available: !isDemo,
       enabled,
@@ -268,6 +535,7 @@ export class AuthService {
       canDisable: user.role === 'ADMIN',
       canReplace: enabled && !isDemo,
       isDemo,
+      microsoftLinked: false,
     };
   }
 
@@ -539,6 +807,13 @@ export class AuthService {
       throw new BadRequestException('Please enter a valid email address.');
     }
 
+    const existing = await this.usersService.findByEmail(normalized);
+    if (existing?.microsoftId) {
+      throw new BadRequestException(
+        'This account uses Microsoft sign-in. Use Sign in with Microsoft — password reset is not available.',
+      );
+    }
+
     const reset = await this.usersService.createPasswordResetToken(normalized);
     if (reset) {
       const mailResult = await this.mailService.sendPasswordResetEmail({
@@ -623,17 +898,30 @@ export class AuthService {
   }
 
   async seed() {
-    const admin = await this.usersService.seedAdmin();
-    const categories = await this.categoriesService.ensureDefaults();
-    const countries = await this.countriesService.ensureDefaults();
-    const demoUsers = await this.usersService.ensureDemoScopedUsers();
+    const live = await withDemoScope(false, async () => {
+      const admin = await this.usersService.seedAdmin();
+      const categories = await this.categoriesService.ensureDefaults();
+      const countries = await this.countriesService.ensureDefaults();
+      const liveUsers = await this.usersService.ensureLiveSeedUsers();
+      await this.usersService.removeDemoPersonasFromLive();
+      return { admin, categories, countries, liveUsers };
+    });
+    const demo = await withDemoScope(true, async () => {
+      const admin = await this.usersService.seedAdmin();
+      const categories = await this.categoriesService.ensureDefaults();
+      const countries = await this.countriesService.ensureDefaults();
+      const demoUsers = await this.usersService.ensureDemoScopedUsers();
+      return { admin, categories, countries, demoUsers };
+    });
     return {
-      ...admin,
-      categories,
-      countries,
-      demoUsers,
-      message:
-        `${admin.message} ${categories.message} ${countries.message} ${demoUsers.message}`.trim(),
+      live,
+      demo,
+      message: [
+        `Live: ${live.admin.message} ${live.categories.message} ${live.countries.message} ${live.liveUsers.message}`,
+        `Demo: ${demo.admin.message} ${demo.categories.message} ${demo.countries.message} ${demo.demoUsers.message}`,
+      ]
+        .join(' | ')
+        .trim(),
     };
   }
 }

@@ -5,8 +5,6 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import {
   Expense,
   ExpenseDocument,
@@ -25,6 +23,7 @@ import {
   InvoiceParseService,
   ParsedInvoiceData,
 } from './invoice-parse.service';
+import { StoreModelsService } from '../common/store/store-models.service';
 
 export interface ActingUser {
   userId: string;
@@ -138,7 +137,7 @@ export class ExpensesService {
   >();
 
   constructor(
-    @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
+    private readonly store: StoreModelsService,
     private readonly categoriesService: CategoriesService,
     private readonly projectsService: ProjectsService,
     private readonly countriesService: CountriesService,
@@ -149,6 +148,10 @@ export class ExpensesService {
     private readonly notificationsService: NotificationsService,
     private readonly invoiceParseService: InvoiceParseService,
   ) {}
+
+  private get expenseModel() {
+    return this.store.expenses();
+  }
 
   /** e.g. EXP-1784269812102-4653 */
   generateExpenseId(): string {
@@ -332,11 +335,8 @@ export class ExpensesService {
         .exec();
 
       if (existingByHash) {
-        const dateStr = existingByHash.submittedAt
-          ? new Date(existingByHash.submittedAt).toLocaleDateString()
-          : 'earlier';
         throw new BadRequestException(
-          `Duplicate invoice file detected: This exact invoice document was already submitted in request ${existingByHash.id} (${existingByHash.project}) by ${existingByHash.requesterName} on ${dateStr}.`,
+          'Duplicate invoice file detected. This exact invoice document was already submitted.',
         );
       }
     }
@@ -364,7 +364,7 @@ export class ExpensesService {
 
         if (existingInProject) {
           throw new BadRequestException(
-            `Duplicate invoice number detected: Invoice #${params.invoiceNumber!.trim()} has already been submitted under request ${existingInProject.id} (${existingInProject.project}) by ${existingInProject.requesterName}.`,
+            `Duplicate invoice number detected. Invoice #${params.invoiceNumber!.trim()} has already been submitted for this project.`,
           );
         }
       }
@@ -411,7 +411,7 @@ export class ExpensesService {
 
         if (existingCrossProject) {
           throw new BadRequestException(
-            `Duplicate invoice detected: Invoice #${params.invoiceNumber!.trim()} with matching details was already submitted under request ${existingCrossProject.id} (${existingCrossProject.project}) by ${existingCrossProject.requesterName}.`,
+            `Duplicate invoice detected. Invoice #${params.invoiceNumber!.trim()} with matching details was already submitted.`,
           );
         }
       }
@@ -436,7 +436,7 @@ export class ExpensesService {
         const existingExtracted = await this.expenseModel.findOne(query).exec();
         if (existingExtracted) {
           throw new BadRequestException(
-            `Duplicate invoice detected via document parse: Invoice #${params.extractedInvoiceNumber} was already submitted under request ${existingExtracted.id} (${existingExtracted.project}) by ${existingExtracted.requesterName}.`,
+            `Duplicate invoice detected via document parse. Invoice #${params.extractedInvoiceNumber} was already submitted.`,
           );
         }
       }
@@ -505,19 +505,20 @@ export class ExpensesService {
       return { isPotentialDuplicate: false };
     }
 
-    const reason = `An expense of ${candidate.currency || '$'}${candidate.originalAmount} under category "${candidate.category}" was already submitted for "${candidate.project}" on ${candidate.date} by ${candidate.requesterName} (Request ${candidate.id}).`;
+    // Generic reason — no peer name / expense id (avoids cross-user oracle)
+    const reason = `A similar expense (same project, category, and amount within ±1 day) was already submitted. Confirm if this is a separate and distinct expense.`;
 
     return {
       isPotentialDuplicate: true,
       conflict: {
-        id: candidate.id,
+        id: '',
         project: candidate.project,
         category: candidate.category,
         amount: candidate.originalAmount || candidate.amount,
         currency: candidate.currency,
         date: candidate.date,
-        requesterName: candidate.requesterName,
-        submittedAt: candidate.submittedAt,
+        requesterName: '',
+        submittedAt: undefined,
         reason,
       },
     };
@@ -595,25 +596,24 @@ export class ExpensesService {
     return this.invoiceParseService.parse(buffer, originalName, mimeType);
   }
 
-  async create(
-    expenseData: CreateExpenseInput,
-    invoice?: InvoiceUploadMeta,
-  ): Promise<Expense> {
-    if (!invoice?.fileName) {
-      throw new BadRequestException('Invoice attachment is required.');
+  /**
+   * Validate submitter, catalogs, project ACL, and dates BEFORE uploading to blob
+   * (avoids orphan Azure objects on Forbidden / BadRequest).
+   */
+  async assertCanCreateExpense(
+    expenseData: Pick<
+      CreateExpenseInput,
+      'category' | 'project' | 'country' | 'date' | 'dueDate' | 'originalAmount'
+    >,
+    actingUser: ActingUser,
+  ): Promise<{
+    category: string;
+    project: string;
+    country: { name: string; currency: string };
+  }> {
+    if (!actingUser?.email) {
+      throw new ForbiddenException('You must be signed in to submit an expense.');
     }
-
-    // Idempotency: Return existing expense on rapid double-submit with same idempotencyKey
-    if (expenseData.idempotencyKey) {
-      const cached = this.idempotencyMap.get(expenseData.idempotencyKey);
-      if (cached && Date.now() - cached.timestamp < 120000) {
-        this.logger.warn(
-          `Idempotent duplicate request caught for key ${expenseData.idempotencyKey}; returning existing expense ${cached.expense.id}`,
-        );
-        return cached.expense;
-      }
-    }
-
     const category = await this.categoriesService.assertActiveName(
       expenseData.category,
     );
@@ -623,18 +623,24 @@ export class ExpensesService {
     const country = await this.countriesService.assertActiveCountry(
       expenseData.country,
     );
-
     const requester = await this.usersService.findByEmail(
-      expenseData.requesterEmail,
+      actingUser.email.trim().toLowerCase(),
     );
-    if (requester?.role === 'REQUESTER') {
+    if (!requester || !requester.isActive) {
+      throw new ForbiddenException(
+        'Your account was not found or is inactive. Contact an administrator.',
+      );
+    }
+    if (
+      actingUser.role === 'REQUESTER' ||
+      requester.role === 'REQUESTER'
+    ) {
       if (!this.usersService.userHasProjectAccess(requester, project)) {
         throw new ForbiddenException(
           `You are not assigned to project "${project}". Contact an administrator.`,
         );
       }
     }
-
     if (!expenseData.dueDate) {
       throw new BadRequestException('Due date is required');
     }
@@ -643,6 +649,56 @@ export class ExpensesService {
         'Due date cannot be before the expense date',
       );
     }
+    if (
+      expenseData.originalAmount === undefined ||
+      Number.isNaN(Number(expenseData.originalAmount))
+    ) {
+      throw new BadRequestException('Amount is required');
+    }
+    return { category, project, country };
+  }
+
+  async create(
+    expenseData: CreateExpenseInput,
+    invoice?: InvoiceUploadMeta,
+    actingUser?: ActingUser,
+  ): Promise<Expense> {
+    if (!invoice?.fileName) {
+      throw new BadRequestException('Invoice attachment is required.');
+    }
+    if (!actingUser?.email) {
+      throw new ForbiddenException('You must be signed in to submit an expense.');
+    }
+
+    // Bind requester identity to the JWT — never trust body email/name for ownership
+    expenseData.requesterEmail = actingUser.email.trim().toLowerCase();
+    if (actingUser.name?.trim()) {
+      expenseData.requesterName = actingUser.name.trim();
+    }
+
+    // Idempotency: Return existing expense on rapid double-submit with same idempotencyKey
+    if (expenseData.idempotencyKey) {
+      const cached = this.idempotencyMap.get(expenseData.idempotencyKey);
+      if (cached && Date.now() - cached.timestamp < 120000) {
+        this.logger.warn(
+          `Idempotent duplicate request caught for key ${expenseData.idempotencyKey}; returning existing expense ${cached.expense.id}`,
+        );
+        // Drop unused upload from this retry (do not orphan blob)
+        if (
+          invoice.fileName &&
+          invoice.fileName !== cached.expense.invoiceFileName
+        ) {
+          await this.removeInvoiceFile(invoice.fileName);
+        }
+        return cached.expense;
+      }
+    }
+
+    // Re-validate (safe if controller already called assertCanCreateExpense)
+    const { category, project, country } = await this.assertCanCreateExpense(
+      expenseData,
+      actingUser,
+    );
 
     const fx = await this.fxService.convertToUsd(
       country.currency,
@@ -725,32 +781,41 @@ export class ExpensesService {
         {
           action: 'Submitted Request',
           timestamp: now,
-          user: 'Public Requester',
+          user: actingUser.name || expenseData.requesterName,
           notes: `Expense of ${fx.originalAmount} ${fx.currency} (≈ $${fx.amountUsd} USD @ ${fx.exchangeRate}) submitted by ${expenseData.requesterName}. Invoice: ${invoice.originalName}.${potential.isPotentialDuplicate ? ' [Confirmed potential duplicate by requester]' : ''}`,
         },
       ],
     });
 
+    let saved: Expense;
     try {
-      const saved = await newExpense.save();
-      if (expenseData.idempotencyKey) {
-        this.idempotencyMap.set(expenseData.idempotencyKey, {
-          expense: saved,
-          timestamp: Date.now(),
-        });
-        if (this.idempotencyMap.size > 200) {
-          const threshold = Date.now() - 300000;
-          for (const [k, v] of this.idempotencyMap.entries()) {
-            if (v.timestamp < threshold) this.idempotencyMap.delete(k);
-          }
-        }
-      }
-      await this.notifyApproversOfSubmission(saved);
-      return saved;
+      saved = await newExpense.save();
     } catch (err) {
+      // Only delete blob when the expense row was not persisted
       await this.removeInvoiceFile(invoice.fileName);
       throw err;
     }
+    if (expenseData.idempotencyKey) {
+      this.idempotencyMap.set(expenseData.idempotencyKey, {
+        expense: saved,
+        timestamp: Date.now(),
+      });
+      if (this.idempotencyMap.size > 200) {
+        const threshold = Date.now() - 300000;
+        for (const [k, v] of this.idempotencyMap.entries()) {
+          if (v.timestamp < threshold) this.idempotencyMap.delete(k);
+        }
+      }
+    }
+    try {
+      await this.notifyApproversOfSubmission(saved);
+    } catch (notifyErr: any) {
+      // Expense + invoice are already saved — do not roll back files on mail failure
+      this.logger.warn(
+        `Approver notify failed for ${saved.id}: ${notifyErr?.message || notifyErr}`,
+      );
+    }
+    return saved;
   }
 
   async findAll(): Promise<Expense[]> {
@@ -758,22 +823,28 @@ export class ExpensesService {
   }
 
   async findAllForUser(actingUser: ActingUser): Promise<Expense[]> {
-    const all = await this.findAll();
-    if (actingUser.role !== 'APPROVER') {
-      return all;
+    // Requesters only see their own requests (never the full store)
+    if (actingUser.role === 'REQUESTER') {
+      return this.findMine(actingUser.email);
     }
-    let assigned = Array.isArray(actingUser.assignedProjects)
-      ? actingUser.assignedProjects
-      : [];
-    if (assigned.length === 0 && actingUser.userId) {
-      const user = await this.usersService.findById(actingUser.userId);
-      assigned = Array.isArray(user?.assignedProjects)
-        ? user.assignedProjects
+    // Approvers: assigned projects only
+    if (actingUser.role === 'APPROVER') {
+      const all = await this.findAll();
+      let assigned = Array.isArray(actingUser.assignedProjects)
+        ? actingUser.assignedProjects
         : [];
+      if (assigned.length === 0 && actingUser.userId) {
+        const user = await this.usersService.findById(actingUser.userId);
+        assigned = Array.isArray(user?.assignedProjects)
+          ? user.assignedProjects
+          : [];
+      }
+      if (assigned.length === 0) return [];
+      const allowed = new Set(assigned);
+      return all.filter((e) => allowed.has(e.project));
     }
-    if (assigned.length === 0) return [];
-    const allowed = new Set(assigned);
-    return all.filter((e) => allowed.has(e.project));
+    // ADMIN / PROCESSOR (and any other staff role): full store
+    return this.findAll();
   }
 
   private async assertApproverProjectAccess(
@@ -806,6 +877,60 @@ export class ExpensesService {
       throw new NotFoundException(`Expense with ID ${id} not found`);
     }
     return expense;
+  }
+
+  /** Anonymous track — status only (no amounts, names, history, or files). */
+  toPublicTrackView(expense: Expense): Record<string, unknown> {
+    return {
+      id: expense.id,
+      status: expense.status,
+      submittedAt: expense.submittedAt,
+    };
+  }
+
+  /**
+   * Anonymous → redacted public track. Signed-in → full expense if authorized
+   * (otherwise Forbidden).
+   */
+  async findOneForViewer(
+    id: string,
+    actingUser?: ActingUser | null,
+  ): Promise<Expense | Record<string, unknown>> {
+    const expense = await this.findOne(id);
+    if (!actingUser?.email) {
+      return this.toPublicTrackView(expense);
+    }
+    await this.assertCanViewExpense(expense, actingUser);
+    return expense;
+  }
+
+  async assertCanViewExpense(
+    expense: Expense | ExpenseDocument,
+    actingUser: ActingUser,
+  ): Promise<void> {
+    const role = actingUser.role;
+    if (role === 'ADMIN' || role === 'PROCESSOR') {
+      return;
+    }
+    const expenseEmail = String(
+      (expense as Expense).requesterEmail || '',
+    ).toLowerCase();
+    if (role === 'REQUESTER') {
+      if (expenseEmail !== actingUser.email.toLowerCase()) {
+        throw new ForbiddenException(
+          'You can only access your own expense requests.',
+        );
+      }
+      return;
+    }
+    if (role === 'APPROVER') {
+      await this.assertApproverProjectAccess(
+        expense as ExpenseDocument,
+        actingUser,
+      );
+      return;
+    }
+    throw new ForbiddenException('You do not have access to this expense.');
   }
 
   async approve(
@@ -1373,15 +1498,15 @@ export class ExpensesService {
       );
       expense.requesterName = updateData.requesterName;
     }
+    // Ownership email is immutable — prevents silent transfer of request ACL
     if (
-      actingUser?.role !== 'REQUESTER' &&
       updateData.requesterEmail &&
-      updateData.requesterEmail !== expense.requesterEmail
+      updateData.requesterEmail.trim().toLowerCase() !==
+        expense.requesterEmail.toLowerCase()
     ) {
-      changes.push(
-        `Email: "${expense.requesterEmail}" ➔ "${updateData.requesterEmail}"`,
+      throw new ForbiddenException(
+        'Requester email cannot be changed on an existing expense.',
       );
-      expense.requesterEmail = updateData.requesterEmail;
     }
     if (updateData.category && updateData.category !== expense.category) {
       const category = await this.categoriesService.assertActiveName(
@@ -1548,6 +1673,18 @@ export class ExpensesService {
   }
 
   /** Replace invoice file on an editable expense (does not change workflow status). */
+  /** Ownership / status check before uploading a replacement invoice to blob storage. */
+  async assertCanReplaceInvoice(
+    id: string,
+    actingUser: ActingUser,
+  ): Promise<void> {
+    const expense = await this.expenseModel.findOne({ id }).exec();
+    if (!expense) {
+      throw new NotFoundException(`Expense with ID ${id} not found`);
+    }
+    this.assertCanMutateExpenseDetails(expense, actingUser, 'edit');
+  }
+
   async replaceInvoice(
     id: string,
     newInvoice: InvoiceUploadMeta,
@@ -1613,11 +1750,16 @@ export class ExpensesService {
     if (!expense)
       throw new NotFoundException(`Expense with ID ${id} not found`);
 
-    if (actingUser?.role === 'REQUESTER') {
+    if (!actingUser?.email) {
+      throw new ForbiddenException('You must be signed in to delete an expense.');
+    }
+    if (actingUser.role === 'REQUESTER') {
       throw new ForbiddenException(
         'Requesters cannot delete expense requests.',
       );
     }
+    // Approvers may only delete within assigned projects; admin/processor: all
+    await this.assertCanViewExpense(expense, actingUser);
 
     const result = await this.expenseModel.deleteOne({ id }).exec();
     if (result.deletedCount === 0)
@@ -1628,7 +1770,10 @@ export class ExpensesService {
     }
   }
 
-  async getInvoiceFile(id: string): Promise<{
+  async getInvoiceFile(
+    id: string,
+    actingUser: ActingUser,
+  ): Promise<{
     buffer: Buffer;
     originalName: string;
     mimeType: string;
@@ -1636,6 +1781,7 @@ export class ExpensesService {
     const expense = await this.expenseModel.findOne({ id }).lean().exec();
     if (!expense)
       throw new NotFoundException(`Expense with ID ${id} not found`);
+    await this.assertCanViewExpense(expense, actingUser);
     if (!expense.invoiceFileName) {
       throw new NotFoundException('No invoice attached to this expense.');
     }
@@ -1658,6 +1804,7 @@ export class ExpensesService {
   async getPaymentReceiptFile(
     id: string,
     fileName: string,
+    actingUser: ActingUser,
   ): Promise<{
     buffer: Buffer;
     originalName: string;
@@ -1666,6 +1813,7 @@ export class ExpensesService {
     const expense = await this.expenseModel.findOne({ id }).lean().exec();
     if (!expense)
       throw new NotFoundException(`Expense with ID ${id} not found`);
+    await this.assertCanViewExpense(expense, actingUser);
 
     const receipt = (expense.paymentReceipts || []).find(
       (r) => r.fileName === fileName,

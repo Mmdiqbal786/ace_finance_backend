@@ -12,18 +12,52 @@ import { ProjectsModule } from './projects/projects.module';
 import { CountriesModule } from './countries/countries.module';
 import { FxModule } from './fx/fx.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { StoreModule } from './common/store/store.module';
+import { DEMO_CONNECTION } from './common/store/store.constants';
+import {
+  assertDistinctLiveDemoUris,
+  resolveDemoMongoUri,
+  resolveLiveMongoUri,
+} from './common/store/mongo-uri';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    // Live database (default connection)
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        uri: configService.getOrThrow<string>('MONGODB_URI'),
-      }),
+      useFactory: (configService: ConfigService) => {
+        const live = resolveLiveMongoUri(
+          configService.getOrThrow<string>('MONGODB_URI'),
+        );
+        const demo = resolveDemoMongoUri(
+          live,
+          configService.get<string>('MONGODB_URI_DEMO'),
+        );
+        assertDistinctLiveDemoUris(live, demo);
+        return { uri: live };
+      },
       inject: [ConfigService],
     }),
+    // Demo database (separate DB on same cluster by default)
+    MongooseModule.forRootAsync({
+      connectionName: DEMO_CONNECTION,
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => {
+        const live = resolveLiveMongoUri(
+          configService.getOrThrow<string>('MONGODB_URI'),
+        );
+        const demo = resolveDemoMongoUri(
+          live,
+          configService.get<string>('MONGODB_URI_DEMO'),
+        );
+        assertDistinctLiveDemoUris(live, demo);
+        return { uri: demo };
+      },
+      inject: [ConfigService],
+    }),
+    StoreModule,
     ExpensesModule,
     UsersModule,
     AuthModule,

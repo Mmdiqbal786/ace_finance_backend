@@ -33,16 +33,18 @@ const NOT_FOUND = `Category ${CATEGORY_ROW._id} not found`;
 export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) {}
 
-  // Public — expense form & dashboard edit dropdowns
+  // Authenticated — expense form & dashboard edit dropdowns
   @Get('active')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Active categories (public)',
+    summary: 'Active categories',
     description: howWhy({
       why: 'Category dropdown on the expense form.',
-      how: 'GET (no auth) → show `icon` + `label`, send `name` on POST /expenses.',
+      how: 'GET (Bearer) → show `icon` + `label`, send `name` on POST /expenses.',
     }),
   })
-  @ApiSopResponses({ successData: [CATEGORY_ROW], auth: false })
+  @ApiSopResponses({ successData: [CATEGORY_ROW], auth: true })
   async findActive() {
     return this.categoriesService.findActive();
   }

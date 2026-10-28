@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Aceolution Finance — Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+  <style>
+    @page {
+      size: A4;
+      margin: 12mm 14mm 14mm 14mm;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    html, body {
+      background-color: #1e1e1e !important;
+      color: #cccccc !important;
+      font-size: 12.5px;
+      line-height: 1.6;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    .vscode-markdown {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 10px 14px;
+      background-color: #1e1e1e;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #ffffff !important;
+      margin: 18px 0 12px 0;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #3c3c3c;
+    }
+
+    h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ffffff !important;
+      margin: 24px 0 10px 0;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #333333;
+      page-break-after: avoid;
+    }
+
+    h3 {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: #ffffff !important;
+      margin: 16px 0 8px 0;
+      page-break-after: avoid;
+    }
+
+    h4 {
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #38bdf8 !important;
+      margin: 12px 0 6px 0;
+      page-break-after: avoid;
+    }
+
+    p {
+      margin-bottom: 10px;
+      color: #cccccc !important;
+    }
+
+    strong {
+      color: #ffffff !important;
+      font-weight: 600;
+    }
+
+    hr {
+      border: 0;
+      height: 1px;
+      background: #333333;
+      margin: 20px 0;
+    }
+
+    a {
+      color: #4daafc !important;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 18px 0;
+      font-size: 11.5px;
+      background-color: #1e1e1e;
+      border: 1px solid #3c3c3c;
+      page-break-inside: avoid;
+    }
+
+    th {
+      background-color: #252526 !important;
+      color: #ffffff !important;
+      font-weight: 700;
+      text-align: left;
+      padding: 7px 10px;
+      border: 1px solid #3c3c3c;
+    }
+
+    td {
+      background-color: #1e1e1e !important;
+      color: #cccccc !important;
+      padding: 7px 10px;
+      border: 1px solid #3c3c3c;
+    }
+
+    tr:nth-child(even) td {
+      background-color: #252526 !important;
+    }
+
+    pre {
+      background-color: #181818 !important;
+      border: 1px solid #333333;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin: 12px 0 16px 0;
+      overflow-x: auto;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #e2e8f0 !important;
+      page-break-inside: avoid;
+    }
+
+    code {
+      background-color: #2b2b2b;
+      color: #f87171;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 11px;
+    }
+
+    pre code {
+      background-color: transparent !important;
+      color: inherit !important;
+      padding: 0;
+    }
+
+    ul, ol {
+      margin: 8px 0 12px 20px;
+      color: #cccccc;
+    }
+
+    li {
+      margin-bottom: 4px;
+    }
+
+    /* Mermaid diagrams container */
+    .mermaid {
+      background-color: #18181b !important;
+      border: 1px solid #333333;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 16px 0 20px 0;
+      display: flex;
+      justify-content: center;
+      page-break-inside: avoid;
+    }
+
+    .mermaid svg {
+      max-width: 100% !important;
+      height: auto !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="vscode-markdown" id="app"></div>
+
+  <script>
+    const markdownText = "# Aceolution Finance — Complete System Architecture Blueprint\n\n## 1. Executive Summary & Live Deployments\n\n**Aceolution Finance** is a company-internal spend, reimbursement, and expense management platform operating at a **global level across different projects, regions, and currencies**. \n\nThe system enables internal employees worldwide to raise project-scoped expenses in their local currencies, normalizes amounts to a corporate USD base via real-time FX rates, enforces strict segregation of duties (SoD) through project-scoped manager approvals, and enables central Accounts Payable (AP) to disburse partial or full payments with proof-of-payment receipts.\n\n### Live Production Environments\n\n| Component | Target URL | Hosting Platform | Runtime / Config |\n|:---|:---|:---|:---|\n| **Web Frontend** | [https://finance.aceolution.com/](https://finance.aceolution.com/) | Azure Static Web Apps | Next.js 16 (Static Export `./out`), Custom Domain, CDN Edge |\n| **Backend API** | [https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net/](https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net/) | Azure App Service (South India) | NestJS 11 + Node.js 20 Linux Plan, Port 3001/80 |\n\n---\n\n## 2. Master System Architecture Diagram\n\n```mermaid\nflowchart TD\n    classDef staff fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#0369A1;\n    classDef web fill:#ECFDF5,stroke:#10B981,stroke-width:2px,color:#047857;\n    classDef api fill:#FEF3C7,stroke:#F59E0B,stroke-width:2px,color:#B45309;\n    classDef store fill:#F3E8FF,stroke:#A855F7,stroke-width:2px,color:#6B21A8;\n\n    subgraph GlobalProjects[\"1. Aceolution Worldwide Teams & Different Projects\"]\n        P1[\"🌍 Project A Team (e.g. US / USD)\\nStaff & Project Leads\"]:::staff\n        P2[\"🌏 Project B Team (e.g. India / INR)\\nStaff & Project Leads\"]:::staff\n        P3[\"🌍 Project C Team (e.g. UK / GBP)\\nStaff & Project Leads\"]:::staff\n        AP[\"💼 Central Global Finance Team\\n(Company-Wide Accounts Payable)\"]:::staff\n    end\n\n    subgraph WebPortal[\"2. Internal Web Portal (finance.aceolution.com)\"]\n        UI[\"Next.js 16 Web Application (Azure SWA)\\n• Project-scoped Claim Forms (Assigned Projects only)\\n• Project Lead Review Queues (No cross-project access)\\n• Central AP Payout Desk (Global visibility)\\n• Consolidated Company Spend Analytics\\n• Password-gated Demo & SOP Guides\"]:::web\n    end\n\n    subgraph BackendAPI[\"3. Global API & Multi-Currency Engine (Azure App Service)\"]\n        Nest[\"NestJS 11 Microservice\\n• Project Scoping & RBAC Guards (assignedProjects)\\n• Multi-Currency FX Engine (Converts local currency to USD)\\n• Dual-Factor Authentication (Email OTP & TOTP)\\n• Automated Due Date Email Alerts (T-3 & T-1 days)\\n• Health Check Endpoints (GET / and GET /health)\"]:::api\n    end\n\n    subgraph CorporateStorage[\"4. Central Cloud Persistence & Storage\"]\n        DB[(\"MongoDB Atlas Database (/ace_finance)\\n• Project Registry & Code Generator (ACE-PR-xxxxxx)\\n• Global Expense Ledger & Immutable History Log\\n• User-to-Project Mapping Directory\")]:::store\n        Blob[(\"Azure Blob Storage (ace-finance-files)\\n• /invoices (Vendor Invoices <= 5MB)\\n• /receipts (Bank Payment Proofs)\")]:::store\n    end\n\n    P1 -->|Submit Local Expenses| UI\n    P2 -->|Submit Local Expenses| UI\n    P3 -->|Submit Local Expenses| UI\n    AP -->|Disburse & Reconcile| UI\n\n    UI -->|\"Internal REST API (JWT)\"| Nest\n\n    Nest -->|Persist Claims & Audit Logs| DB\n    Nest -->|Store & Stream Attachments| Blob\n```\n\n---\n\n## 3. Financial Expense Flow & Payout Lifecycle\n\n```mermaid\nflowchart LR\n    classDef blue fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#0369A1;\n    classDef yellow fill:#FEF3C7,stroke:#F59E0B,stroke-width:2px,color:#B45309;\n    classDef purple fill:#F3E8FF,stroke:#A855F7,stroke-width:2px,color:#6B21A8;\n    classDef green fill:#DCFCE7,stroke:#16A34A,stroke-width:2px,color:#15803D;\n    classDef red fill:#FEE2E2,stroke:#DC2626,stroke-width:2px,color:#991B1B;\n\n    Step1[\"1. GLOBAL EMPLOYEE\\nSelects assigned project\\n& submits in local currency\\n(INR / USD / EUR / GBP)\"]:::blue\n    Step2[\"2. FX CONVERSION\\nSystem locks exchange rate\\n& converts to USD base\\nfor uniform reporting\"]:::purple\n    Step3[\"3. PROJECT LEAD\\nApprover for that specific\\nproject verifies budget\\n& approves claim\"]:::yellow\n    Step4[\"4. GLOBAL FINANCE / AP\\nCentral AP disburses payout\\n& attaches proof receipt\\n(Full or partial payout)\"]:::green\n    Step5[\"5. SETTLED & AUDITED\\nCompany ledger updated\\nAudit trail sealed\"]:::green\n    Reject[\"CHANGES / REJECTED\\nReturned to employee\\nor declined with notes\"]:::red\n\n    Step1 --> Step2\n    Step2 --> Step3\n    Step3 -->|Approved| Step4\n    Step3 -.->|Needs Edits or Rejected| Reject\n    Step4 -->|Disbursed| Step5\n    Step4 -.->|Reject or Send Back| Reject\n```\n\n---\n\n## 4. Frontend Architecture (`ace_finance_frontend`)\n\n### 4.1 Technology Stack\n- **Framework**: Next.js 16 (App Router) + React 19 + TypeScript\n- **Styling**: Tailwind CSS 4\n- **Build Mode**: Static export (`output: \"export\"`) compiling to `./out`\n- **Node.js**: `>=20 <23`\n- **API Connection**: Interacts with the NestJS API via `NEXT_PUBLIC_API_URL`\n\n### 4.2 Role Matrix & UI Scope\n\n| Role | Main Application Areas | Project Scope & Boundary |\n|:---|:---|:---|\n| **`REQUESTER`** | Submit Expense, My Requests | **Assigned projects only** (restricted dropdown + Profile chips) |\n| **`APPROVER`** | Approver Queue | **Assigned projects only** (restricted queue, alert emails, Profile chips) |\n| **`PROCESSOR`** | Processor / Payment Queue | **All approved expenses** (global, not project-scoped) |\n| **`ADMIN`** | Users, Categories, Projects, Countries | **All system master data** (global, not project-scoped) |\n\n### 4.3 UI Highlights & Feature Integrations\n- **Profile View & Access Scope**:\n  - Requester / Approver: View mode shows **Assigned Projects** as read-only chips (scrollable when numerous). Editing hides project assignments.\n  - Admin / Processor: View mode shows **Access Scope** instead of project lists.\n- **Submit Expense Workspace**:\n  - Split layout with submission form on the left.\n  - Desktop right panel: **What happens next** (4 visual workflow steps) and **Your recent requests** (latest 4 submissions or \"No data\").\n- **Dashboard Filtering**:\n  - Header filter controls: Project dropdown + `submittedAt` date range picker (From / To).\n- **Password-Gated Documentation & Guides**:\n  - Interactive product guides available at `/demo-guide`, `/docs-guide`, and presentation slide mode at `/docs-guide/present`.\n  - Unlocked by `NEXT_PUBLIC_DEMO_GUIDE_ACCESS_PASSWORD`.\n- **In-App Notifications**:\n  - Backend notification tracking APIs operational; bell UI temporarily hidden while preserving underlying endpoints.\n\n### 4.4 Environment Configuration & Build Scripts\n\n```env\n# Frontend .env (Local)\nNEXT_PUBLIC_API_URL=http://localhost:3001\nNEXT_PUBLIC_APP_URL=http://localhost:3000\nNEXT_PUBLIC_DEMO_GUIDE_ACCESS_PASSWORD=your-demo-password\n\n# Production (Set in Azure SWA or .env.deploy)\nNEXT_PUBLIC_API_URL=https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net\nNEXT_PUBLIC_APP_URL=https://finance.aceolution.com\nNEXT_PUBLIC_DEMO_GUIDE_ACCESS_PASSWORD=your-secure-demo-password\n```\n\n#### NPM Commands\n- `npm run dev` — Next.js development server (Port 3000)\n- `npm run build` — Generates static export in `./out`\n- `npm run preview` — Locally serves the `./out` static directory\n- `npm run deploy:azure` / `.\\scripts\\deploy-azure-swa.ps1` — One-command production deployment to Azure SWA using `SWA_DEPLOYMENT_TOKEN` from `.env.deploy`.\n- Automated Documentation Screenshot Scripts: `capture-docs-refresh.cjs`, `capture-docs-updated-ui.cjs`, `capture-docs-auth.cjs`, `capture-docs-confirm-preview.cjs`, `capture-docs-screenshots-gaps.cjs`.\n\n---\n\n## 5. Backend Architecture (`ace_finance_backend`)\n\n### 5.1 Technology Stack\n- **Framework**: NestJS 11 + TypeScript\n- **Database**: MongoDB Atlas via Mongoose ODM (`/ace_finance` database)\n- **Authentication**: JWT / Passport Auth + 2FA (Email OTP + TOTP Authenticator)\n- **Object Storage**: Azure Blob Storage (`ace-finance-files`, folders `/invoices` and `/receipts`)\n- **Node.js**: `>=20 <23`\n- **Local Port**: `3001`\n\n### 5.2 Core Business Features & Security\n- **Dual-Factor Authentication (2FA)**:\n  - Email OTP: 6-digit code, SHA-256 hashed, expiring in 10 minutes.\n  - TOTP Authenticator: RFC 6238 compliant QR setup for authenticator apps.\n  - Password Management: Reset tokens, forgot password, forced first-time change (`mustChangePassword`).\n- **Seeded Demo Accounts (`isDemo: true`)**:\n  - Seeded `@acefinance.com` accounts bypass email OTP and authenticator enrollment to enable frictionless live demonstrations.\n  - Demo Seed Endpoint: `POST /auth/seed` (and automated startup boot seed).\n- **Expense State Machine**:\n  - Workflow: `submit` $\\rightarrow$ approver `approve` / `reject` / `request-changes` $\\rightarrow$ processor `pay` / `partial-pay` / `reject`.\n  - Immutable audit history logging user, timestamp, action, and financial delta.\n- **Scheduled Escalations & Due-Soon Reminders**:\n  - Automated cron jobs check invoice due dates:\n    - Approver reminder dispatched **3 days** before due date.\n    - Escalation alert dispatched **1 day** before due date.\n- **Health Checks**:\n  - `GET /` and `GET /health` endpoints for Azure App Service uptime probes.\n\n### 5.3 3-Tier Transactional Email Priority Chain\n\n```\n[Expense / Auth Event]\n         │\n         ▼\n[1. Azure Communication Services (ACS)] ──► Succeeded ──► Delivered\n         │ (Failed / Not Configured)\n         ▼\n[2. Resend HTTPS API (Fallback)]       ──► Succeeded ──► Delivered\n         │ (Failed / Not Configured)\n         ▼\n[3. SMTP Transport (Gmail / Custom)]    ──► Succeeded ──► Delivered\n         │ (Failed)\n         ▼\n[Non-blocking Error Logged] (Financial transaction never aborted)\n```\n\n1. **Azure Communication Services (ACS) Email** (Preferred): Used when `AZURE_COMMUNICATION_CONNECTION_STRING` and `AZURE_EMAIL_SENDER` (e.g. `DoNotReply@….azurecomm.net`) are set.\n2. **Resend API**: Triggered when `RESEND_API_KEY` is present.\n3. **SMTP Relay**: Fallback using `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS`.\n\n### 5.4 Environment Configuration & NPM Scripts\n\n```env\n# Backend .env\nMONGODB_URI=mongodb+srv://.../ace_finance?retryWrites=true&w=majority\nJWT_SECRET=your-long-random-secret\nPORT=3001\nFRONTEND_URL=http://localhost:3000\nAZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=...\nAZURE_STORAGE_CONTAINER=ace-finance-files\nAZURE_COMMUNICATION_CONNECTION_STRING=endpoint=https://...;accesskey=...\nAZURE_EMAIL_SENDER=DoNotReply@your-domain.azurecomm.net\nSMTP_HOST=smtp.gmail.com\nSMTP_USER=your-email@gmail.com\nSMTP_PASS=your-app-password\nRESEND_API_KEY=re_...\n```\n\n#### NPM Commands\n- `npm run start:dev` — Nest watch mode for development\n- `npm run build` — Compiles TypeScript into `dist/`\n- `npm run start:prod` — Runs compiled production application\n- `npm run lint` — ESLint validation\n- `npm test` — Unit test suite execution\n\n---\n\n## 6. Duplicate Submission & Fraud Prevention Architecture\n\nTo prevent duplicate reimbursement claims where different team members attempt to submit the same invoice (or the same employee accidentally submits twice), Aceolution Finance implements a multi-tier prevention engine:\n\n```\n[User Submits Form + Invoice File]\n                │\n                ▼\n   [Step 1: Compute SHA-256 Hash]\n     fileHash = SHA256(file.buffer)\n                │\n                ▼\n   [Step 2: Pre-Flight Duplicate Check] ──► (Match Found?) ──► Throw 400 BadRequest\n   • Is exact fileHash already in DB?                          (Zero storage waste,\n   • Is invoiceNumber already in Project?                       No orphan blobs)\n   • Is invoiceNumber + amount/date in DB?\n                │ (Passes)\n                ▼\n   [Step 3: Upload to Azure Blob Storage]\n     /invoices/{expenseId}-original.pdf\n                │\n                ▼\n   [Step 4: Atomic DB Persistence]\n     Stores invoiceFileHash & invoiceNumberNormalized\n     (Excludes REJECTED_APPROVER / REJECTED_PROCESSOR)\n```\n\n### Key Security & Verification Pillars\n1. **Cryptographic Binary Hashing (SHA-256)**:\n   - Regardless of whether the user renames the file (e.g. `invoice.pdf` $\\rightarrow$ `receipt_claim.pdf`), the SHA-256 binary hash remains identical.\n   - Any re-submission of an identical invoice document is blocked globally across all projects.\n2. **Normalized Invoice Number Indexing**:\n   - Symbols, punctuation, and whitespace are stripped and normalized to lowercase (e.g. `INV # 2024 - 001` $\\rightarrow$ `inv2024001`).\n   - Prevents bypass through formatting alterations. Generic placeholders (`N/A`, `None`, `0`) are ignored to prevent false positives.\n   - Prohibits duplicate invoice numbers within the same project, and cross-project duplicates with matching amounts or dates.\n3. **Pre-Flight Controller Gate (Azure Cost & Storage Optimization)**:\n   - Checks for duplicates **before** streaming binary data to Azure Blob Storage. This guarantees zero orphaned blobs and zero wasted bandwidth.\n4. **Legitimate Re-submission Support**:\n   - Expenses with status `REJECTED_APPROVER` or `REJECTED_PROCESSOR` are excluded from the duplicate block, allowing requesters to rectify rejected claims when necessary.\n\n\n";
+
+    // Configure marked to render mermaid blocks as div.mermaid
+    const renderer = new marked.Renderer();
+    const defaultCode = renderer.code.bind(renderer);
+
+    renderer.code = function(code, lang, escaped) {
+      if (lang === 'mermaid') {
+        return '<div class="mermaid">' + code + '</div>';
+      }
+      return defaultCode(code, lang, escaped);
+    };
+
+    document.getElementById('app').innerHTML = marked.parse(markdownText, { renderer: renderer });
+
+    // Initialize mermaid with dark theme matching VS Code preview
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#18181b',
+        mainBkg: '#18181b',
+        textColor: '#e2e8f0',
+        lineColor: '#94a3b8'
+      },
+      flowchart: {
+        useMaxWidth: true,
+        curve: 'basis'
+      }
+    });
+  </script>
+</body>
+</html>

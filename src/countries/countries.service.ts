@@ -6,10 +6,10 @@ import {
   OnModuleInit,
   Logger,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Country, CountryDocument } from './country.schema';
+import { CountryDocument } from './country.schema';
 import DEFAULT_COUNTRIES from './countries.seed.json';
+import { StoreModelsService } from '../common/store/store-models.service';
+import { withDemoScope } from '../common/store/demo-scope';
 
 const CURRENCY_PATTERN = /^[A-Za-z]{3}$/;
 
@@ -17,13 +17,19 @@ const CURRENCY_PATTERN = /^[A-Za-z]{3}$/;
 export class CountriesService implements OnModuleInit {
   private readonly logger = new Logger(CountriesService.name);
 
-  constructor(
-    @InjectModel(Country.name) private countryModel: Model<CountryDocument>,
-  ) {}
+  constructor(private readonly store: StoreModelsService) {}
+
+  private get countryModel() {
+    return this.store.countries();
+  }
 
   async onModuleInit() {
-    const result = await this.ensureDefaults();
-    if (result.created) this.logger.log(result.message);
+    for (const demo of [false, true]) {
+      const result = await withDemoScope(demo, () => this.ensureDefaults());
+      if (result.created) {
+        this.logger.log(`${demo ? 'Demo' : 'Live'}: ${result.message}`);
+      }
+    }
   }
 
   /** Insert any missing seed countries; never overwrite existing rows. */

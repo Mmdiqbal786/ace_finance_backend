@@ -53,7 +53,8 @@ export class CreateExpenseDto {
 
   @ApiPropertyOptional({
     description:
-      'Set to true when user acknowledges a potential duplicate warning',
+      'Set to true when the user confirms a potential-duplicate warning (fuzzy triple). Hard duplicates (same file hash / invoice #) cannot be overridden — submit is auto-blocked and no expense is created.',
+    example: false,
   })
   duplicateConfirmed?: boolean | string;
 

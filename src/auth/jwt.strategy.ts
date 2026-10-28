@@ -14,11 +14,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    if (payload?.purpose === 'login_2fa') {
+    // Access tokens have no `purpose`. Reject challenge / OAuth / workspace JWTs
+    // so they cannot be used as Bearer sessions (would bypass role checks).
+    if (payload?.purpose) {
+      const hints: Record<string, string> = {
+        login_2fa: 'Complete two-factor verification to continue.',
+        workspace_choice: 'Choose Live or Demo workspace to continue.',
+        ms_oauth: 'Finish Microsoft sign-in before calling the API.',
+      };
       throw new UnauthorizedException(
-        'Complete two-factor verification to continue.',
+        hints[String(payload.purpose)] ||
+          'This token cannot be used as an API session. Sign in again.',
       );
     }
+    if (!payload?.sub || !payload?.email || !payload?.role) {
+      throw new UnauthorizedException('Invalid access token.');
+    }
+    const store = payload.store === 'demo' ? 'demo' : 'live';
     return {
       userId: payload.sub,
       name: payload.name,
@@ -31,6 +43,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         ? payload.assignedProjects
         : [],
       isDemo: Boolean(payload.isDemo),
+      store,
     };
   }
 }

@@ -11,6 +11,32 @@ export class LoginDto {
   password: string;
 }
 
+export class DemoLoginDto {
+  @ApiProperty({ example: 'requester.gac@acefinance.com' })
+  email: string;
+
+  @ApiProperty({
+    example: 'Requester@1234',
+    description: 'Persona password (required).',
+  })
+  password: string;
+
+  @ApiPropertyOptional({
+    example: 'your-demo-access-code',
+    description:
+      'Required when API has DEMO_ACCESS_CODE set (same value as demo-guide unlock). Prefer header X-Demo-Access-Code.',
+  })
+  accessCode?: string;
+}
+
+export class VerifyDemoAccessDto {
+  @ApiProperty({
+    example: 'your-demo-access-code',
+    description: 'Same code as DEMO_ACCESS_CODE / demo-guide unlock password',
+  })
+  accessCode: string;
+}
+
 export class Verify2faDto {
   @ApiProperty({
     example: CHALLENGE_TOKEN_EXAMPLE,
@@ -38,6 +64,21 @@ export class ResendOtpDto {
     description: 'challengeToken returned by POST /auth/login',
   })
   challengeToken: string;
+}
+
+export class SelectWorkspaceDto {
+  @ApiProperty({
+    example: CHALLENGE_TOKEN_EXAMPLE,
+    description: 'workspaceToken returned when admin must choose Live vs Demo',
+  })
+  workspaceToken: string;
+
+  @ApiProperty({
+    enum: ['live', 'demo'],
+    example: 'live',
+    description: 'live = company data; demo = training sandbox',
+  })
+  store: 'live' | 'demo';
 }
 
 export class TotpCodeDto {

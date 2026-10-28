@@ -6,9 +6,9 @@ import {
   OnModuleInit,
   Logger,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Category, CategoryDocument } from './category.schema';
+import { CategoryDocument } from './category.schema';
+import { StoreModelsService } from '../common/store/store-models.service';
+import { withDemoScope } from '../common/store/demo-scope';
 
 const DEFAULT_CATEGORIES = [
   { name: 'Travel', label: 'Travel & Lodging', icon: '✈️' },
@@ -22,13 +22,19 @@ const DEFAULT_CATEGORIES = [
 export class CategoriesService implements OnModuleInit {
   private readonly logger = new Logger(CategoriesService.name);
 
-  constructor(
-    @InjectModel(Category.name) private categoryModel: Model<CategoryDocument>,
-  ) {}
+  constructor(private readonly store: StoreModelsService) {}
+
+  private get categoryModel() {
+    return this.store.categories();
+  }
 
   async onModuleInit() {
-    const result = await this.ensureDefaults();
-    if (result.created) this.logger.log(result.message);
+    for (const demo of [false, true]) {
+      const result = await withDemoScope(demo, () => this.ensureDefaults());
+      if (result.created) {
+        this.logger.log(`${demo ? 'Demo' : 'Live'}: ${result.message}`);
+      }
+    }
   }
 
   async findAll(): Promise<any[]> {

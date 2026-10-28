@@ -1,12 +1,10 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import {
-  Notification,
   NotificationDocument,
   NotificationType,
 } from './notification.schema';
 import { UsersService } from '../users/users.service';
+import { StoreModelsService } from '../common/store/store-models.service';
 
 export interface CreateNotificationInput {
   userId: string;
@@ -22,10 +20,13 @@ export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
   constructor(
-    @InjectModel(Notification.name)
-    private readonly notificationModel: Model<NotificationDocument>,
+    private readonly store: StoreModelsService,
     private readonly usersService: UsersService,
   ) {}
+
+  private get notificationModel() {
+    return this.store.notifications();
+  }
 
   /** Fire-and-forget create — never blocks expense workflow. */
   enqueue(input: CreateNotificationInput | CreateNotificationInput[]) {

@@ -1,6 +1,13 @@
-import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  Controller,
+  Get,
+  Query,
+  BadRequestException,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { FxService } from './fx.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { howWhy } from '../common/swagger/api-guide';
 import { ApiSopResponses } from '../common/swagger/api-sop';
 import { FX_DATA } from '../common/swagger/sop-data-samples';
@@ -10,13 +17,15 @@ import { FX_DATA } from '../common/swagger/sop-data-samples';
 export class FxController {
   constructor(private readonly fxService: FxService) {}
 
-  /** Public — preview local → USD conversion using today's rate */
+  /** Authenticated — preview local → USD conversion using today's rate */
   @Get('convert')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Convert an amount between currencies or to USD (public)',
+    summary: 'Convert an amount between currencies or to USD',
     description: howWhy({
       why: 'Show converted local amounts or "≈ $15.63 USD" preview under the amount field.',
-      how: "GET `?from=USD&to=INR&amount=184.2` or GET `?currency=INR&amount=1500`.",
+      how: "GET (Bearer) `?from=USD&to=INR&amount=184.2` or GET `?currency=INR&amount=1500`.",
     }),
   })
   @ApiQuery({ name: 'currency', required: false, example: 'INR' })
@@ -25,7 +34,7 @@ export class FxController {
   @ApiQuery({ name: 'amount', required: true, example: 1500 })
   @ApiSopResponses({
     successData: FX_DATA,
-    auth: false,
+    auth: true,
     badRequest: 'amount query must be a number',
   })
   async convert(

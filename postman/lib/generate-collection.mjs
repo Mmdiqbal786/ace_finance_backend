@@ -180,6 +180,7 @@ const saveTokens = [
   'const res = pm.response.json();',
   "if (res.access_token) { pm.collectionVariables.set('accessToken', res.access_token); console.log('accessToken saved'); }",
   "if (res.challengeToken) { pm.collectionVariables.set('challengeToken', res.challengeToken); console.log('2FA required: set otpCode, then run Verify 2FA'); }",
+  "if (res.workspaceToken) { pm.collectionVariables.set('workspaceToken', res.workspaceToken); console.log('Workspace choice: set store=live|demo, then run Select workspace'); }",
 ];
 const saveId = (varName, expr) => [
   'const res = pm.response.json();',
@@ -212,7 +213,7 @@ const collection = {
       'Each **folder** description explains Why / How / When to use those APIs.',
       'Full guide (flow, roles, statuses) is at the top of Swagger `/api/docs`.',
       '',
-      'Flow: Login → Catalogs (projects / categories / countries) → Submit expense → Approve → Partial pay / Pay → Notifications.',
+      'Flow: Microsoft / Demo Access / Login (password) → optional select-workspace → Catalogs → Submit expense (duplicate checks) → Approve → Partial pay / Pay → Notifications.',
       '',
       '## Responses',
       'Success bodies are returned as-is (no envelope). Errors:',
@@ -247,8 +248,9 @@ const collection = {
       '| Variable | Purpose |',
       '|----------|---------|',
       '| `baseUrl` | API root (change this for Local vs Azure) |',
-      '| `accessToken` | JWT — saved by Login / Verify 2FA Tests scripts |',
+      '| `accessToken` | JWT — saved by Login / Demo Access / Select workspace / Verify 2FA |',
       '| `challengeToken` / `otpCode` | 2FA accounts: login saves the challenge, you type the code |',
+      '| `workspaceToken` | Dual-store accounts: login/Microsoft → Select workspace (`store` live|demo) |',
       '| `expenseId` | Saved by Submit expense (or first row of List expenses) |',
       '| `receiptFileName` | Saved after a payment / when an expense has receipts |',
       '| `userId` / `projectId` / `categoryId` / `countryId` / `notificationId` | Saved by Create / List Tests scripts |',
@@ -272,6 +274,11 @@ const collection = {
     },
     { key: 'accessToken', value: '' },
     { key: 'challengeToken', value: '' },
+    {
+      key: 'workspaceToken',
+      value: '',
+      description: 'From login/Microsoft when requiresWorkspaceChoice',
+    },
     {
       key: 'otpCode',
       value: '',
@@ -325,21 +332,96 @@ const loginExamples = Object.values(E.LOGIN_EXAMPLES).map((ex) =>
 collection.item.push(
   folder('Authentication', 'First request every session.', [
     req({
-      name: 'Login',
+      name: 'Microsoft status',
+      method: 'GET',
+      path: '/auth/microsoft/status',
+      sop: { auth: false },
+      description: howWhy(
+        'See if Microsoft Entra login is configured on this API.',
+        'GET → `{ configured, ... }`. Browser SSO uses `GET /auth/microsoft/login` (302).',
+      ),
+      examples: [
+        example('200 OK', 200, { configured: true, loginPath: '/auth/microsoft/login' }),
+      ],
+    }),
+    req({
+      name: 'List Demo Access accounts',
+      method: 'GET',
+      path: '/auth/demo-accounts',
+      sop: { auth: false },
+      description: howWhy(
+        'Dynamic personas for the login Demo Access picker (demo DB only).',
+        'GET → `[{ id, name, email, role, assignedProjects }]`. Toggle isDemo in Demo workspace → Users.',
+      ),
+      examples: [
+        example('200 OK', 200, [
+          {
+            id: '66f1a2b3c4d5e6f7a89b0c1d',
+            name: 'Requester GAC',
+            email: 'requester.gac@acefinance.com',
+            role: 'REQUESTER',
+            assignedProjects: ['Google Art and culture (GAC)'],
+          },
+        ]),
+      ],
+    }),
+    req({
+      name: 'Demo Access login',
+      method: 'POST',
+      path: '/auth/demo-login',
+      body: { email: 'requester.gac@acefinance.com' },
+      sop: { auth: 'Not a demo persona / inactive' },
+      description: howWhy(
+        'One-click training login into the **demo** store (isolated Mongo + blobs).',
+        'POST `{ email }` (password optional) → JWT `store: "demo"`. Prefer this over password for @acefinance.com personas.',
+      ),
+      events: saveTokens,
+      examples: [example('201 Signed into demo', 201, S.LOGIN_DATA)],
+    }),
+    req({
+      name: 'Login (password)',
       method: 'POST',
       path: '/auth/login',
       body: E.LOGIN_EXAMPLES.admin.value,
       sop: { auth: 'Invalid email or password' },
       description: howWhy(
-        'Get the JWT used by every protected request.',
-        'Send `{ email, password }` → Tests script saves `accessToken`. 2FA accounts return `challengeToken` instead → set `otpCode` → run **Verify 2FA**.',
-        '**Demo accounts (password only):** see the saved examples — Admin, Requester GAC, Approver Media, Processor Alisha.',
+        'Password path (admin / no Microsoft). Microsoft-linked and Demo Access personas are blocked here.',
+        'Send `{ email, password }` → Tests script saves `accessToken`. 2FA → `challengeToken` → **Verify 2FA**. Dual-store → `workspaceToken` → **Select workspace**.',
+        'Saved examples: Admin, Requester GAC, Approver Media, Processor Alisha (prefer Demo Access login for training personas).',
       ),
       events: saveTokens,
       examples: [
         ...loginExamples,
         example('201 2FA required', 201, S.LOGIN_2FA_DATA),
+        example('201 Choose workspace', 201, {
+          requiresWorkspaceChoice: true,
+          workspaceToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          message: 'This account exists in more than one workspace. Choose Live or Demo.',
+          workspaces: [
+            { id: 'live', label: 'Live company data', role: 'ADMIN' },
+            { id: 'demo', label: 'Demo / training data', role: 'ADMIN' },
+          ],
+        }),
       ],
+    }),
+    req({
+      name: 'Select workspace',
+      method: 'POST',
+      path: '/auth/select-workspace',
+      body: {
+        workspaceToken: '{{workspaceToken}}',
+        store: 'live',
+      },
+      sop: {
+        auth: 'Invalid or expired workspaceToken',
+        badRequest: 'Choose live or demo workspace.',
+      },
+      description: howWhy(
+        'Finish sign-in when the email exists in Live and Demo (role shown per store).',
+        'POST `{ workspaceToken, store: "live"|"demo" }` → `access_token` for that store.',
+      ),
+      events: saveTokens,
+      examples: [example('201 Signed into store', 201, S.LOGIN_DATA)],
     }),
     req({
       name: 'Verify 2FA',
@@ -564,8 +646,50 @@ collection.item.push(
 collection.item.push(
   folder(
     'Expenses',
-    'Request form, dashboard, approver and processor actions.',
+    'Request form, dashboard, approver and processor actions. Hard duplicates auto-block; potential duplicates need duplicateConfirmed=true.',
     [
+      req({
+        name: 'Check duplicate (pre-flight)',
+        method: 'GET',
+        path: '/expenses/check-duplicate',
+        query: [
+          q('invoiceNumber', 'INV-1001', {
+            description: 'Optional invoice #',
+          }),
+          q('project', 'Google Art and culture (GAC)'),
+          q('category', 'Meals'),
+          q('amount', '12.34'),
+          q('currency', 'USD'),
+          q('date', '2026-10-28'),
+          q('fileHash', '', {
+            description: 'Optional SHA-256 of invoice file',
+            disabled: true,
+          }),
+        ],
+        sop: { auth: false },
+        description: howWhy(
+          'Same rules as submit: hard block (file/invoice #) vs potential warning (project+category+amount ±1 day).',
+          'GET query → `{ isHardDuplicate, isPotentialDuplicate, ... }`. Rejected expenses are excluded.',
+        ),
+        examples: [
+          example('200 No conflict', 200, {
+            isHardDuplicate: false,
+            isPotentialDuplicate: false,
+          }),
+          example('200 Hard duplicate', 200, {
+            isHardDuplicate: true,
+            hardDuplicateReason:
+              'Duplicate invoice number detected: Invoice #INV-1001 has already been submitted under request EXP-1001.',
+            isPotentialDuplicate: false,
+          }),
+          example('200 Potential duplicate', 200, {
+            isHardDuplicate: false,
+            isPotentialDuplicate: true,
+            potentialDuplicateReason:
+              'An expense of USD12.34 under category "Meals" was already submitted for "Google Art and culture (GAC)" on 2026-10-27 by Iqbal Ahamed (Request EXP-1002).',
+          }),
+        ],
+      }),
       req({
         name: 'Submit expense (public, multipart)',
         method: 'POST',
@@ -602,6 +726,11 @@ collection.item.push(
           text('dueDate', '2026-10-15', '[Required] On/after date'),
           text('invoiceNumber', 'INV-1001', '[Optional]'),
           text('invoiceDate', '2026-09-30', '[Optional]'),
+          text(
+            'duplicateConfirmed',
+            'false',
+            '[Optional] true = proceed past potential-duplicate warning',
+          ),
           file(
             'invoice',
             '[Required] PDF / JPG / PNG / WEBP / GIF, max 5 MB — click "Select Files"',
@@ -609,16 +738,36 @@ collection.item.push(
         ],
         sop: {
           auth: false,
-          badRequest: 'Invoice attachment is required.',
+          badRequest:
+            'Duplicate invoice file detected: This exact invoice document was already submitted…',
           forbidden:
             'You are not assigned to project "Google News Lab (GNL)". Contact an administrator.',
         },
         description: howWhy(
           'Requester raises a new expense with its invoice.',
           'Pick a file for `invoice`, Send → Tests script saves `expenseId`. Approvers of the project are emailed.',
+          '**Hard duplicate** (same file / invoice #) → 400, request not created. **Potential duplicate** → 400 `POTENTIAL_DUPLICATE:…` unless `duplicateConfirmed=true`. Use **Check duplicate** first.',
         ),
         events: saveId('expenseId', 'res.id'),
-        examples: [example('201 Created', 201, S.EXPENSE_PENDING)],
+        examples: [
+          example('201 Created', 201, S.EXPENSE_PENDING),
+          example(
+            '400 Hard duplicate',
+            400,
+            err(
+              400,
+              'Duplicate invoice number detected: Invoice #INV-1001 has already been submitted under request EXP-1001 (Google Art and culture (GAC)) by Requester GAC.',
+            ),
+          ),
+          example(
+            '400 Potential duplicate',
+            400,
+            err(
+              400,
+              'POTENTIAL_DUPLICATE: An expense of USD1500 under category "Travel" was already submitted for "Google Art and culture (GAC)" on 2026-10-01 by Requester GAC (Request EXP-1002). If this is a separate and distinct expense, please confirm the duplicate checkbox before submitting.',
+            ),
+          ),
+        ],
       }),
       req({
         name: 'Track expense by ID (public)',

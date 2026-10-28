@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Aceolution Finance — System Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm 14mm 16mm 14mm;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: #ffffff;
+      color: #0f172a;
+      line-height: 1.5;
+      font-size: 13px;
+    }
+
+    .header-banner {
+      border-bottom: 2px solid #0284c7;
+      padding-bottom: 16px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .brand-logo-text {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-badge {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+      color: white;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 800;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 2px;
+    }
+
+    .meta-tag {
+      font-size: 11px;
+      font-weight: 700;
+      background: #e0f2fe;
+      color: #0369a1;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      border: 1px solid #bae6fd;
+    }
+
+    h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 22px 0 10px 0;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    h3 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #1e293b;
+      margin: 14px 0 6px 0;
+    }
+
+    p {
+      margin-bottom: 10px;
+      color: #334155;
+    }
+
+    /* Live URLs Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0 18px 0;
+      font-size: 12px;
+    }
+
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 8px 12px;
+      text-align: left;
+    }
+
+    th {
+      background: #f1f5f9;
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+
+    a {
+      color: #0284c7;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    /* Diagram Containers */
+    .diagram-container {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 12px 0 18px 0;
+      display: flex;
+      justify-content: center;
+      page-break-inside: avoid;
+    }
+
+    .mermaid {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+    }
+
+    .mermaid svg {
+      max-width: 100% !important;
+      height: auto !important;
+    }
+
+    /* Grid for Tech Specs */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 14px 0;
+      page-break-inside: avoid;
+    }
+
+    .box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 14px;
+    }
+
+    .box h4 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0369a1;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #cbd5e1;
+      padding-bottom: 4px;
+    }
+
+    ul {
+      margin-left: 18px;
+      color: #334155;
+    }
+
+    li {
+      margin-bottom: 4px;
+    }
+
+    .page-break {
+      page-break-before: always;
+    }
+
+    .footer-note {
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px solid #e2e8f0;
+      text-align: center;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header-banner">
+    <div class="brand-logo-text">
+      <div class="logo-badge">A</div>
+      <div>
+        <h1>Aceolution Finance — Complete System Architecture</h1>
+        <div class="subtitle">Global Internal Spend & Expense Management (Web Portal, API Microservice & Azure Cloud)</div>
+      </div>
+    </div>
+    <div class="meta-tag">Internal Corporate Tool</div>
+  </div>
+
+  <!-- 1. Executive Summary & Live Deployments -->
+  <h2>1. Executive Summary & Live Production Environments</h2>
+  <p>
+    <strong>Aceolution Finance</strong> is a company-internal spend, reimbursement, and expense management platform operating at a <strong>global level across different projects, regions, and currencies</strong>. 
+    It enables internal employees worldwide to raise project-scoped expenses in their local currencies, normalizes amounts to a corporate USD base via real-time FX rates, enforces strict segregation of duties (SoD) through project-scoped manager approvals, and enables central Accounts Payable (AP) to disburse partial or full payments with proof receipts.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Target URL</th>
+        <th>Hosting Platform</th>
+        <th>Runtime & Configuration</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Web Frontend</strong></td>
+        <td><a href="https://finance.aceolution.com/">https://finance.aceolution.com/</a></td>
+        <td>Azure Static Web Apps (SWA)</td>
+        <td>Next.js 16 (Static Export <code>./out</code>), Custom Domain, Edge Distribution</td>
+      </tr>
+      <tr>
+        <td><strong>Backend API</strong></td>
+        <td><a href="https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net/">https://ace-finance-api...azurewebsites.net/</a></td>
+        <td>Azure App Service</td>
+        <td>NestJS 11 + Node.js 20 Linux Plan (South India region), Port 3001/80</td>
+      </tr>
+      <tr>
+        <td><strong>Primary Database</strong></td>
+        <td>MongoDB Atlas Cluster</td>
+        <td>MongoDB Atlas</td>
+        <td>Replica Set with Mongoose ODM (Database: <code>/ace_finance</code>)</td>
+      </tr>
+      <tr>
+        <td><strong>File Storage</strong></td>
+        <td>Azure Blob Storage</td>
+        <td>Azure Storage Account</td>
+        <td>Container: <code>ace-finance-files</code> (Folders: <code>/invoices</code>, <code>/receipts</code>)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 2. Master Architecture Diagram -->
+  <h2>2. Master System Architecture Diagram</h2>
+  <p>Consolidated high-level diagram illustrating user interaction, presentation portal, backend services, and cloud storage.</p>
+  
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart TD
+    classDef staff fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#0369A1;
+    classDef web fill:#ECFDF5,stroke:#10B981,stroke-width:2px,color:#047857;
+    classDef api fill:#FEF3C7,stroke:#F59E0B,stroke-width:2px,color:#B45309;
+    classDef store fill:#F3E8FF,stroke:#A855F7,stroke-width:2px,color:#6B21A8;
+
+    subgraph GlobalProjects["1. Aceolution Worldwide Teams & Different Projects"]
+        P1["🌍 Project A Team (e.g. US / USD)\nStaff & Project Leads"]:::staff
+        P2["🌏 Project B Team (e.g. India / INR)\nStaff & Project Leads"]:::staff
+        P3["🌍 Project C Team (e.g. UK / GBP)\nStaff & Project Leads"]:::staff
+        AP["💼 Central Global Finance Team\n(Company-Wide Accounts Payable)"]:::staff
+    end
+
+    subgraph WebPortal["2. Internal Web Portal (finance.aceolution.com)"]
+        UI["Next.js 16 Web Application (Azure SWA)\n• Project-scoped Claim Forms (Assigned Projects only)\n• Project Lead Review Queues (No cross-project access)\n• Central AP Payout Desk (Global visibility)\n• Consolidated Company Spend Analytics"]:::web
+    end
+
+    subgraph BackendAPI["3. Global API & Multi-Currency Engine (Azure App Service)"]
+        Nest["NestJS 11 Microservice\n• Project Scoping & RBAC Guards (assignedProjects)\n• Multi-Currency FX Engine (Converts local currency to USD)\n• Dual-Factor Authentication (Email OTP & TOTP)\n• Automated Due Date Email Alerts (T-3 & T-1 days)"]:::api
+    end
+
+    subgraph CorporateStorage["4. Central Cloud Persistence & Storage"]
+        DB[("MongoDB Atlas Database (/ace_finance)\n• Project Registry & Code Generator (ACE-PR-xxxxxx)\n• Global Expense Ledger & Immutable History Log\n• User-to-Project Mapping Directory")]:::store
+        Blob[("Azure Blob Storage (ace-finance-files)\n• /invoices (Vendor Invoices <= 5MB)\n• /receipts (Bank Payment Proofs)")]:::store
+    end
+
+    P1 -->|Submit Local Expenses| UI
+    P2 -->|Submit Local Expenses| UI
+    P3 -->|Submit Local Expenses| UI
+    AP -->|Disburse & Reconcile| UI
+
+    UI -->|Internal REST API (JWT)| Nest
+
+    Nest -->|Persist Claims & Audit Logs| DB
+    Nest -->|Store & Stream Attachments| Blob
+    </div>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- 3. Financial Expense Flow -->
+  <h2>3. Global Project Expense & Multi-Currency Flow</h2>
+  <p>The 4-stage lifecycle from local currency submission to central accounts payable settlement and reconciliation.</p>
+
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart LR
+    classDef blue fill:#E0F2FE,stroke:#0284C7,stroke-width:2px,color:#0369A1;
+    classDef yellow fill:#FEF3C7,stroke:#F59E0B,stroke-width:2px,color:#B45309;
+    classDef purple fill:#F3E8FF,stroke:#A855F7,stroke-width:2px,color:#6B21A8;
+    classDef green fill:#DCFCE7,stroke:#16A34A,stroke-width:2px,color:#15803D;
+    classDef red fill:#FEE2E2,stroke:#DC2626,stroke-width:2px,color:#991B1B;
+
+    Step1["1. GLOBAL EMPLOYEE\nSelects assigned project\n& submits in local currency\n(INR / USD / EUR / GBP)"]:::blue
+    Step2["2. FX CONVERSION\nSystem locks exchange rate\n& converts to USD base\nfor uniform reporting"]:::purple
+    Step3["3. PROJECT LEAD\nApprover for that specific\nproject verifies budget\n& approves claim"]:::yellow
+    Step4["4. GLOBAL FINANCE / AP\nCentral AP disburses payout\n& attaches proof receipt\n(Full or partial payout)"]:::green
+    Step5["5. SETTLED & AUDITED\nCompany ledger updated\nAudit trail sealed"]:::green
+    Reject["CHANGES / REJECTED\nReturned to employee\nor declined with notes"]:::red
+
+    Step1 --> Step2
+    Step2 --> Step3
+    Step3 -->|Approved| Step4
+    Step3 -.->|Needs Edits or Rejected| Reject
+    Step4 -->|Disbursed| Step5
+    Step4 -.->|Reject or Send Back| Reject
+    </div>
+  </div>
+
+  <!-- 4. Technical Architecture Specifications -->
+  <h2>4. Frontend & Backend Technical Specifications</h2>
+
+  <div class="grid-2">
+    <!-- Frontend Box -->
+    <div class="box">
+      <h4>💻 Frontend Architecture (ace_finance_frontend)</h4>
+      <ul>
+        <li><strong>Framework:</strong> Next.js 16 (App Router) + React 19 + TypeScript</li>
+        <li><strong>Styling:</strong> Tailwind CSS 4</li>
+        <li><strong>Build:</strong> Static export (<code>output: "export"</code>) compiling into <code>./out</code></li>
+        <li><strong>Hosting:</strong> Azure Static Web Apps (<a href="https://finance.aceolution.com/">finance.aceolution.com</a>)</li>
+        <li><strong>Deployment:</strong> <code>npm run deploy:azure</code> (automated via <code>deploy-azure-swa.ps1</code>)</li>
+        <li><strong>Role Scoping:</strong> 
+          <ul>
+            <li><code>REQUESTER</code>: Submit & track assigned projects only</li>
+            <li><code>APPROVER</code>: Approve/reject assigned projects only</li>
+            <li><code>PROCESSOR</code> & <code>ADMIN</code>: Global company visibility</li>
+          </ul>
+        </li>
+        <li><strong>UI Panels:</strong> Submit Expense split view with right-side tracker ("What happens next" & "Recent requests"), header project & date filters</li>
+        <li><strong>Documentation:</strong> Password-gated SOP & slide guides at <code>/docs-guide</code> & <code>/demo-guide</code></li>
+      </ul>
+    </div>
+
+    <!-- Backend Box -->
+    <div class="box">
+      <h4>⚙️ Backend Architecture (ace_finance_backend)</h4>
+      <ul>
+        <li><strong>Framework:</strong> NestJS 11 + TypeScript + Node.js 20 LTS</li>
+        <li><strong>Database:</strong> MongoDB Atlas (Mongoose ODM) with <code>/ace_finance</code> database</li>
+        <li><strong>Authentication:</strong> JWT Passport, Email OTP (SHA-256), TOTP Authenticator, demo persona bypass (<code>isDemo: true</code>)</li>
+        <li><strong>Storage:</strong> Azure Blob Storage (<code>ace-finance-files</code>) with folders <code>/invoices</code> (<= 5MB) and <code>/receipts</code></li>
+        <li><strong>Email Fallback Chain:</strong>
+          <ol>
+            <li>Azure Communication Services (ACS) Email</li>
+            <li>Resend HTTPS API</li>
+            <li>SMTP / Gmail Transport</li>
+          </ol>
+        </li>
+        <li><strong>Automation:</strong> Cron schedulers for invoice due dates (dispatches reminders at 3 days & 1 day before due date)</li>
+        <li><strong>Hosting:</strong> Azure App Service (Linux, South India region, Port 3001)</li>
+        <li><strong>Health Probes:</strong> <code>GET /</code> and <code>GET /health</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 5. Internal Governance & Operational Rules -->
+  <h2>5. Internal Corporate Governance & Segregation of Duties</h2>
+  <div class="box">
+    <ul>
+      <li><strong>Project Budget Isolation:</strong> Employees and Project Leads can only submit and review expenses against projects explicitly assigned to them by administrators (<code>assignedProjects</code>).</li>
+      <li><strong>Segregation of Duties (SoD):</strong> The Project Lead approving the expense cannot disburse funds; disbursement is exclusively handled by the Central Accounts Payable team.</li>
+      <li><strong>Proof Enforcement:</strong> Submissions strictly require vendor invoices (PDF, JPG, PNG <= 5MB); disbursements strictly require proof-of-payment receipts.</li>
+      <li><strong>Immutable Audit Trail:</strong> Every action (submission, approval, partial payment, full payment, change request, rejection) writes to an immutable <code>history</code> log with operator name, timestamp, and financial delta.</li>
+    </ul>
+  </div>
+
+  <div class="footer-note">
+    &copy; 2026 Aceolution Finance. Enterprise System Architecture.
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'neutral',
+      flowchart: {
+        useMaxWidth: true,
+        curve: 'basis'
+      }
+    });
+  </script>
+</body>
+</html>
+

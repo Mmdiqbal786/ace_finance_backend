@@ -27,6 +27,13 @@ export class CreateUserDto {
       'Project names the user can access (required for REQUESTER / APPROVER)',
   })
   assignedProjects?: string[];
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'Demo Access persona (demo workspace only). Appears on the login Demo Access list.',
+  })
+  isDemo?: boolean;
 }
 
 export class UpdateUserDto {
@@ -53,6 +60,13 @@ export class UpdateUserDto {
     example: ['Google Art and culture (GAC)', 'Google News Lab (GNL)'],
   })
   assignedProjects?: string[];
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'Toggle Demo Access. true = show on login Demo Access list (demo workspace only).',
+  })
+  isDemo?: boolean;
 }
 
 export class UpdateMeDto {

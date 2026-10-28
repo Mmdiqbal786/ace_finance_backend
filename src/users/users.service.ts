@@ -3,18 +3,25 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  UnauthorizedException,
   OnModuleInit,
   Logger,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { User, UserDocument, UserRole } from './user.schema';
-import { Expense, ExpenseDocument } from '../expenses/expense.schema';
+import { UserDocument, UserRole } from './user.schema';
 import { MailService } from '../mail/mail.service';
 import { ProjectsService } from '../projects/projects.service';
 import { DEMO_SCOPED_USERS } from './demo-users.seed';
+import { StoreModelsService } from '../common/store/store-models.service';
+import { currentDemo, withDemoScope } from '../common/store/demo-scope';
+
+const DEMO_ACCESS_ROLE_ORDER: UserRole[] = [
+  'REQUESTER',
+  'APPROVER',
+  'PROCESSOR',
+  'ADMIN',
+];
 
 function roleNeedsProjects(role: UserRole): boolean {
   return role === 'REQUESTER' || role === 'APPROVER';
@@ -45,19 +52,56 @@ export class UsersService implements OnModuleInit {
   private readonly logger = new Logger(UsersService.name);
 
   constructor(
-    @InjectModel(User.name) private userModel: Model<UserDocument>,
-    @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
+    private readonly store: StoreModelsService,
     private readonly mailService: MailService,
     private readonly projectsService: ProjectsService,
   ) {}
 
+  private get userModel() {
+    return this.store.users();
+  }
+
+  private get expenseModel() {
+    return this.store.expenses();
+  }
+
   async onModuleInit() {
     try {
-      await this.projectsService.ensureRequiredProjects();
-      await this.ensureDemoScopedUsers();
-      await this.rewriteLegacyProcessorHistory();
+      const isProd = process.env.NODE_ENV === 'production';
+      // Production: skip auto-creating known-password accounts unless ALLOW_BOOT_SEED=true.
+      // Use POST /auth/seed with X-Seed-Secret for controlled bootstrap instead.
+      const allowBootSeed =
+        !isProd || process.env.ALLOW_BOOT_SEED === 'true';
+
+      // Live: projects always; users only when boot seed allowed
+      await withDemoScope(false, async () => {
+        await this.projectsService.ensureRequiredProjects();
+        if (allowBootSeed) {
+          await this.seedAdmin();
+          await this.ensureLiveSeedUsers();
+        } else {
+          this.logger.log(
+            'Live boot user seed skipped (production). Set ALLOW_BOOT_SEED=true or use POST /auth/seed.',
+          );
+        }
+        await this.removeDemoPersonasFromLive();
+        await this.rewriteLegacyProcessorHistory();
+      });
+      // Demo: admin copy + password-only demo personas (isolated DB)
+      await withDemoScope(true, async () => {
+        await this.projectsService.ensureRequiredProjects();
+        if (allowBootSeed) {
+          await this.seedAdmin();
+          await this.ensureDemoScopedUsers();
+        } else {
+          this.logger.log(
+            'Demo boot user seed skipped (production). Set ALLOW_BOOT_SEED=true or use POST /auth/seed.',
+          );
+        }
+        await this.rewriteLegacyProcessorHistory();
+      });
     } catch (err: any) {
-      this.logger.warn(`Demo user seed skipped: ${err?.message || err}`);
+      this.logger.warn(`Store user seed skipped: ${err?.message || err}`);
     }
   }
 
@@ -71,6 +115,141 @@ export class UsersService implements OnModuleInit {
 
   async findByEmail(email: string): Promise<UserDocument | null> {
     return this.userModel.findOne({ email: email.toLowerCase() }).exec();
+  }
+
+  /**
+   * Public Demo Access list — active isDemo personas in the current store
+   * (always called inside withDemoScope(true)).
+   */
+  async listDemoAccessAccounts(): Promise<
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      role: UserRole;
+      assignedProjects: string[];
+    }>
+  > {
+    const rows = await this.userModel
+      .find(
+        { isDemo: true, isActive: true },
+        {
+          name: 1,
+          email: 1,
+          role: 1,
+          assignedProjects: 1,
+        },
+      )
+      .lean()
+      .exec();
+
+    const rank = (role: UserRole) => {
+      const i = DEMO_ACCESS_ROLE_ORDER.indexOf(role);
+      return i < 0 ? 99 : i;
+    };
+
+    return rows
+      .map((u) => ({
+        id: String(u._id),
+        name: u.name,
+        email: u.email,
+        role: u.role as UserRole,
+        assignedProjects: Array.isArray(u.assignedProjects)
+          ? u.assignedProjects
+          : [],
+      }))
+      .sort(
+        (a, b) =>
+          rank(a.role) - rank(b.role) ||
+          a.name.localeCompare(b.name) ||
+          a.email.localeCompare(b.email),
+      );
+  }
+
+  async findByMicrosoftId(microsoftId: string): Promise<UserDocument | null> {
+    if (!microsoftId) return null;
+    return this.userModel.findOne({ microsoftId }).exec();
+  }
+
+  /** Accepts exact domains, or `*aceolution*` / `aceolution.*` for every Aceolution TLD. */
+  private emailMatchesAllowedDomains(email: string, domains: string[]): boolean {
+    const normalized = email.trim().toLowerCase();
+    const at = normalized.lastIndexOf('@');
+    if (at < 0) return false;
+    const host = normalized.slice(at + 1);
+    return domains.some((domain) => {
+      if (domain === '*aceolution*' || domain === 'aceolution.*') {
+        return /^aceolution\.[a-z0-9.-]+$/i.test(host);
+      }
+      return host === domain || normalized.endsWith(`@${domain}`);
+    });
+  }
+
+  /**
+   * Microsoft SSO (ACE Outsource pattern):
+   * - Existing user by microsoftId or email → link + sign in (role from Ace Finance DB)
+   * - New user → auto-create REQUESTER (projects empty until admin assigns)
+   * - Domain allow-list applies to new users only
+   * - No welcome email (they already signed in with Microsoft)
+   */
+  async findOrCreateFromMicrosoft(
+    profile: {
+      microsoftId: string;
+      email: string;
+      name: string;
+    },
+    options?: { allowedEmailDomains?: string[]; allowedEmailDomain?: string },
+  ): Promise<UserDocument> {
+    const email = profile.email.trim().toLowerCase();
+    const existing =
+      (await this.findByMicrosoftId(profile.microsoftId)) ||
+      (await this.findByEmail(email));
+
+    if (existing) {
+      if (!existing.isActive) {
+        throw new UnauthorizedException(
+          'Your Aceolution Finance account is inactive. Ask an admin to activate it.',
+        );
+      }
+      if (existing.microsoftId !== profile.microsoftId) {
+        existing.microsoftId = profile.microsoftId;
+      }
+      if (profile.name?.trim() && !existing.name?.trim()) {
+        existing.name = profile.name.trim();
+      }
+      await existing.save();
+      return existing;
+    }
+
+    const domains = (
+      options?.allowedEmailDomains?.length
+        ? options.allowedEmailDomains
+        : options?.allowedEmailDomain
+          ? [options.allowedEmailDomain]
+          : []
+    )
+      .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+      .filter(Boolean);
+    if (domains.length > 0 && !this.emailMatchesAllowedDomains(email, domains)) {
+      throw new BadRequestException(
+        'Only Aceolution Microsoft accounts (@aceolution.com, @aceolution.tw, and other @aceolution.* domains) can sign in to Aceolution Finance.',
+      );
+    }
+
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    const hashed = await bcrypt.hash(randomPassword, 10);
+    const created = new this.userModel({
+      name: (profile.name || email).trim(),
+      email,
+      password: hashed,
+      role: 'REQUESTER' as UserRole,
+      mustChangePassword: false,
+      assignedProjects: [],
+      microsoftId: profile.microsoftId,
+      isDemo: false,
+      totpEnabled: false,
+    });
+    return created.save();
   }
 
   async findById(id: string): Promise<UserDocument | null> {
@@ -171,9 +350,12 @@ export class UsersService implements OnModuleInit {
     role: UserRole;
     assignedProjects: string[];
     isDemo: boolean;
+    microsoftLinked: boolean;
+    mustSetupTotp: boolean;
   }> {
     const user = await this.findById(userId);
     if (!user) throw new NotFoundException('User not found');
+    const microsoftLinked = Boolean(user.microsoftId);
     return {
       id: user._id.toString(),
       name: user.name,
@@ -183,6 +365,12 @@ export class UsersService implements OnModuleInit {
         ? user.assignedProjects
         : [],
       isDemo: Boolean(user.isDemo),
+      microsoftLinked,
+      mustSetupTotp:
+        user.role !== 'ADMIN' &&
+        !user.isDemo &&
+        !microsoftLinked &&
+        !(user.totpEnabled && user.totpSecret),
     };
   }
 
@@ -249,11 +437,24 @@ export class UsersService implements OnModuleInit {
     role: UserRole;
     password?: string;
     assignedProjects?: string[];
+    isDemo?: boolean;
   }): Promise<any> {
     const existing = await this.findByEmail(data.email);
     if (existing) {
       throw new ConflictException(
         `User with email ${data.email} already exists`,
+      );
+    }
+
+    const isDemo = Boolean(data.isDemo);
+    if (isDemo && !currentDemo()) {
+      throw new BadRequestException(
+        'Demo Access personas can only be created in the demo workspace.',
+      );
+    }
+    if (isDemo && data.role === 'ADMIN') {
+      throw new BadRequestException(
+        'Admin accounts cannot be Demo Access personas. Use Live/Demo workspace choice for admin.',
       );
     }
 
@@ -270,11 +471,21 @@ export class UsersService implements OnModuleInit {
       email: data.email.toLowerCase(),
       password: hashed,
       role: data.role,
-      mustChangePassword: true,
+      mustChangePassword: !isDemo,
       assignedProjects,
+      isDemo,
+      totpEnabled: false,
     });
     const saved = await user.save();
     const { password: _, ...result } = saved.toObject();
+
+    if (isDemo) {
+      return {
+        ...result,
+        welcomeEmailSent: false,
+        temporaryPassword: undefined,
+      };
+    }
 
     const mailResult = await this.mailService.sendWelcomeEmail({
       to: result.email,
@@ -299,6 +510,7 @@ export class UsersService implements OnModuleInit {
       role?: UserRole;
       isActive?: boolean;
       assignedProjects?: string[];
+      isDemo?: boolean;
     },
   ): Promise<any> {
     const existing = await this.findById(id);
@@ -306,9 +518,31 @@ export class UsersService implements OnModuleInit {
 
     const nextRole = data.role ?? existing.role;
     const $set: Record<string, unknown> = {};
+    const $unset: Record<string, string> = {};
     if (data.name !== undefined) $set.name = data.name;
     if (data.role !== undefined) $set.role = data.role;
     if (data.isActive !== undefined) $set.isActive = data.isActive;
+
+    if (data.isDemo !== undefined) {
+      const nextDemo = Boolean(data.isDemo);
+      if (nextDemo && !currentDemo()) {
+        throw new BadRequestException(
+          'Demo Access personas can only be managed in the demo workspace.',
+        );
+      }
+      if (nextDemo && nextRole === 'ADMIN') {
+        throw new BadRequestException(
+          'Admin accounts cannot be Demo Access personas.',
+        );
+      }
+      $set.isDemo = nextDemo;
+      if (nextDemo) {
+        $set.mustChangePassword = false;
+        $set.totpEnabled = false;
+        $unset.totpSecret = '';
+        $unset.totpPendingSecret = '';
+      }
+    }
 
     if (data.role !== undefined || data.assignedProjects !== undefined) {
       const projectsSource =
@@ -321,12 +555,14 @@ export class UsersService implements OnModuleInit {
       );
     }
 
+    const updateDoc: Record<string, unknown> = { $set };
+    if (Object.keys($unset).length > 0) updateDoc.$unset = $unset;
+
     const user = await this.userModel
-      .findByIdAndUpdate(
-        id,
-        { $set },
-        { new: true, projection: { password: 0 } },
-      )
+      .findByIdAndUpdate(id, updateDoc, {
+        new: true,
+        projection: { password: 0 },
+      })
       .lean()
       .exec();
     if (!user) throw new NotFoundException(`User ${id} not found`);
@@ -460,28 +696,88 @@ export class UsersService implements OnModuleInit {
     return this.userModel.countDocuments().exec();
   }
 
-  async seedAdmin(): Promise<{ created: boolean; message: string }> {
-    const count = await this.countAll();
-    if (count > 0) {
-      return { created: false, message: 'Users already exist. Seed skipped.' };
+  /**
+   * Ensure an ADMIN exists in the current store (used when Microsoft/password
+   * admin opens Demo and the email is not seeded there yet).
+   */
+  async ensureAdminMirror(
+    email: string,
+    name: string,
+  ): Promise<UserDocument> {
+    const normalized = email.trim().toLowerCase();
+    const existing = await this.findByEmail(normalized);
+    if (existing) {
+      if (!existing.isActive || existing.role !== 'ADMIN') {
+        existing.isActive = true;
+        existing.role = 'ADMIN';
+        existing.mustChangePassword = false;
+        existing.isDemo = false;
+        await existing.save();
+      }
+      return existing;
     }
-    const hashed = await bcrypt.hash('Admin@1234', 10);
-    await this.userModel.create({
-      name: 'Admin',
-      email: 'finance@aceolution.com',
+    const hashed = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+    return this.userModel.create({
+      name: (name || normalized).trim(),
+      email: normalized,
       password: hashed,
       role: 'ADMIN',
       mustChangePassword: false,
       assignedProjects: [],
+      isDemo: false,
+      totpEnabled: false,
+    });
+  }
+
+  async seedAdmin(): Promise<{ created: boolean; message: string }> {
+    const email = 'finance@aceolution.com';
+    const existing = await this.findByEmail(email);
+    if (existing) {
+      if (existing.role !== 'ADMIN' || existing.isActive === false) {
+        existing.role = 'ADMIN';
+        existing.isActive = true;
+        existing.mustChangePassword = false;
+        await existing.save();
+        return {
+          created: false,
+          message: `Admin ensured (${currentDemo() ? 'demo' : 'live'}): ${email}`,
+        };
+      }
+      return {
+        created: false,
+        message: `Admin already exists (${currentDemo() ? 'demo' : 'live'}).`,
+      };
+    }
+    const hashed = await bcrypt.hash('Admin@1234', 10);
+    await this.userModel.create({
+      name: 'Admin',
+      email,
+      password: hashed,
+      role: 'ADMIN',
+      mustChangePassword: false,
+      assignedProjects: [],
+      isDemo: false,
     });
     return {
       created: true,
-      message: 'Admin account created: finance@aceolution.com / Admin@1234',
+      message: `Admin account created (${currentDemo() ? 'demo' : 'live'}): ${email} / Admin@1234`,
     };
   }
 
+  /** Live DB only: upsert primary OTP test accounts (not isDemo personas). */
+  async ensureLiveSeedUsers(): Promise<{
+    created: number;
+    updated: number;
+    message: string;
+  }> {
+    return this.upsertSeedUsers(
+      DEMO_SCOPED_USERS.filter((u) => !u.isDemo),
+      false,
+    );
+  }
+
   /**
-   * Upsert demo requesters/approvers with distinct project assignments.
+   * Demo DB only: upsert password-only demo personas (isDemo).
    * Does not send welcome emails. Updates assignedProjects on every boot.
    */
   async ensureDemoScopedUsers(): Promise<{
@@ -503,16 +799,37 @@ export class UsersService implements OnModuleInit {
       }
     }
 
+    return this.upsertSeedUsers(
+      DEMO_SCOPED_USERS.filter((u) => Boolean(u.isDemo)),
+      true,
+    );
+  }
+
+  /** Remove leftover isDemo personas from the live database. */
+  async removeDemoPersonasFromLive(): Promise<number> {
+    if (currentDemo()) return 0;
+    const result = await this.userModel.deleteMany({ isDemo: true }).exec();
+    const n = result.deletedCount || 0;
+    if (n > 0) {
+      this.logger.log(`Removed ${n} demo persona(s) from live database`);
+    }
+    return n;
+  }
+
+  private async upsertSeedUsers(
+    seeds: typeof DEMO_SCOPED_USERS,
+    forceDemoFlag: boolean,
+  ): Promise<{ created: number; updated: number; message: string }> {
     let created = 0;
     let updated = 0;
 
-    for (const demo of DEMO_SCOPED_USERS) {
+    for (const demo of seeds) {
       const email = demo.email.toLowerCase();
       const assignedProjects = await this.assertAssignedProjectsValid(
         demo.role,
         demo.assignedProjects,
       );
-      const isDemo = Boolean(demo.isDemo);
+      const isDemo = forceDemoFlag || Boolean(demo.isDemo);
       const existing = await this.findByEmail(email);
 
       if (!existing) {
@@ -579,10 +896,11 @@ export class UsersService implements OnModuleInit {
       this.logger.log(`Updated demo user ${email} projects/role/isDemo`);
     }
 
+    const label = forceDemoFlag ? 'Demo personas' : 'Live seed users';
     return {
       created,
       updated,
-      message: `Demo users: ${created} created, ${updated} updated.`,
+      message: `${label}: ${created} created, ${updated} updated.`,
     };
   }
 

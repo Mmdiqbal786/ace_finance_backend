@@ -8,6 +8,11 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { BlobServiceClient, ContainerClient } from '@azure/storage-blob';
 import { extname } from 'path';
+import { currentDemo } from '../common/store/demo-scope';
+import {
+  DEFAULT_DEMO_CONTAINER,
+  DEFAULT_LIVE_CONTAINER,
+} from '../common/store/store.constants';
 
 export type StorageFolder = 'invoices' | 'receipts';
 
@@ -31,30 +36,81 @@ export interface StoredAttachment {
 @Injectable()
 export class StorageService {
   private readonly logger = new Logger(StorageService.name);
-  private readonly container: ContainerClient;
-  private readonly containerName: string;
+  private readonly liveContainer: ContainerClient;
+  private readonly demoContainer: ContainerClient;
+  private readonly liveContainerName: string;
+  private readonly demoContainerName: string;
+  private demoReady: Promise<void> | null = null;
 
   constructor(private readonly config: ConfigService) {
     const azureConn = this.config
       .get<string>('AZURE_STORAGE_CONNECTION_STRING')
       ?.trim();
-    this.containerName =
+    this.liveContainerName =
       this.config.get<string>('AZURE_STORAGE_CONTAINER')?.trim() ||
-      'ace-finance-files';
+      DEFAULT_LIVE_CONTAINER;
+    this.demoContainerName =
+      this.config.get<string>('AZURE_STORAGE_CONTAINER_DEMO')?.trim() ||
+      DEFAULT_DEMO_CONTAINER;
 
     if (!azureConn) {
       throw new Error(
         'Azure Blob Storage is required. Set AZURE_STORAGE_CONNECTION_STRING in .env',
       );
     }
+    if (this.liveContainerName === this.demoContainerName) {
+      throw new Error(
+        'AZURE_STORAGE_CONTAINER and AZURE_STORAGE_CONTAINER_DEMO must be different (live ≠ demo blobs).',
+      );
+    }
 
     const service = BlobServiceClient.fromConnectionString(azureConn);
-    this.container = service.getContainerClient(this.containerName);
-    this.logger.log(`Azure Blob Storage (container: ${this.containerName})`);
+    this.liveContainer = service.getContainerClient(this.liveContainerName);
+    this.demoContainer = service.getContainerClient(this.demoContainerName);
+    this.logger.log(
+      `Azure Blob Storage (live: ${this.liveContainerName}, demo: ${this.demoContainerName})`,
+    );
+  }
+
+  private container(): ContainerClient {
+    return currentDemo() ? this.demoContainer : this.liveContainer;
+  }
+
+  private containerName(): string {
+    return currentDemo() ? this.demoContainerName : this.liveContainerName;
+  }
+
+  /** Ensure the demo container exists the first time demo storage is used. */
+  private async ensureDemoContainer(): Promise<void> {
+    if (!currentDemo()) return;
+    if (!this.demoReady) {
+      this.demoReady = this.demoContainer
+        .createIfNotExists()
+        .then(() => undefined)
+        .catch((err: any) => {
+          this.demoReady = null;
+          throw err;
+        });
+    }
+    await this.demoReady;
+  }
+
+  private assertSafeFileName(fileName: string): string {
+    const name = String(fileName || '').trim();
+    if (
+      !name ||
+      name.includes('/') ||
+      name.includes('\\') ||
+      name.includes('..') ||
+      name.includes('\0')
+    ) {
+      throw new BadRequestException('Invalid file name.');
+    }
+    return name;
   }
 
   private objectPath(folder: StorageFolder, fileName: string): string {
-    return `${folder}/${fileName}`;
+    return `${folder}/${this.assertSafeFileName(fileName)}`;
   }
 
   /** Keep keys safe for storage paths and Content-Disposition filenames. */
@@ -116,6 +172,7 @@ export class StorageService {
     file: Express.Multer.File,
     naming?: AttachmentNaming,
   ): Promise<StoredAttachment> {
+    await this.ensureDemoContainer();
     const buffer = this.requireBuffer(file);
     const kind =
       naming?.kind || (folder === 'invoices' ? 'invoice' : 'receipt');
@@ -129,13 +186,13 @@ export class StorageService {
     const path = this.objectPath(folder, fileName);
 
     try {
-      const block = this.container.getBlockBlobClient(path);
+      const block = this.container().getBlockBlobClient(path);
       await block.uploadData(buffer, {
         blobHTTPHeaders: { blobContentType: mimeType },
       });
     } catch (err: any) {
       this.logger.error(
-        `Azure upload failed (${path}): ${err?.message || err}`,
+        `Azure upload failed (${this.containerName()}/${path}): ${err?.message || err}`,
       );
       throw new ServiceUnavailableException(
         `File upload to cloud storage failed. Request was not saved. (${err?.message || err})`,
@@ -149,10 +206,11 @@ export class StorageService {
     folder: StorageFolder,
     fileName: string,
   ): Promise<{ buffer: Buffer }> {
+    await this.ensureDemoContainer();
     const path = this.objectPath(folder, fileName);
 
     try {
-      const block = this.container.getBlockBlobClient(path);
+      const block = this.container().getBlockBlobClient(path);
       const download = await block.download(0);
       if (!download.readableStreamBody) {
         throw new Error('empty body');
@@ -164,7 +222,7 @@ export class StorageService {
       return { buffer: Buffer.concat(chunks) };
     } catch (err: any) {
       this.logger.warn(
-        `Azure download failed (${path}): ${err?.message || err}`,
+        `Azure download failed (${this.containerName()}/${path}): ${err?.message || err}`,
       );
       throw new NotFoundException('File not found in cloud storage.');
     }
@@ -175,12 +233,13 @@ export class StorageService {
     fileName?: string,
   ): Promise<void> {
     if (!fileName) return;
+    await this.ensureDemoContainer();
     const path = this.objectPath(folder, fileName);
     try {
-      await this.container.getBlockBlobClient(path).deleteIfExists();
+      await this.container().getBlockBlobClient(path).deleteIfExists();
     } catch (err: any) {
       this.logger.warn(
-        `Azure delete failed for ${path}: ${err?.message || err}`,
+        `Azure delete failed for ${this.containerName()}/${path}: ${err?.message || err}`,
       );
     }
   }
