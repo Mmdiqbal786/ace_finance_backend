@@ -9,7 +9,7 @@
     "node": ">=20 <23"
   },
   "scripts": {
-    "build": "nest build",
+    "build": "node ./node_modules/@nestjs/cli/bin/nest.js build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "node dist/main",
     "start:dev": "nest start --watch",
@@ -21,7 +21,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "postman:generate": "nest build && node postman/lib/generate-collection.mjs",
+    "postman:generate": "npm run build && node postman/lib/generate-collection.mjs",
     "postman:verify": "node postman/lib/verify.mjs",
     "test:api:smoke": "node postman/lib/verify.mjs smoke",
     "test:api:system": "node postman/lib/verify.mjs system",
@@ -57,12 +57,13 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "swagger-ui-dist": "^5.32.13",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "@nestjs/cli": "^11.0.0",
+    "typescript": "^5.7.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
     "@eslint/js": "^9.18.0",
-    "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.1",
     "@types/cookie-parser": "^1.4.10",
@@ -88,7 +89,6 @@
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
