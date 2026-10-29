@@ -19,6 +19,7 @@ import {
   SWAGGER_TAG_DESCRIPTIONS,
 } from './common/swagger/api-guide';
 import { setOpenApiDocument } from './common/swagger/openapi-store';
+import { apiDocsEnabled } from './common/api-docs-enabled';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -123,10 +124,8 @@ async function bootstrap() {
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   setOpenApiDocument(document);
-  // Docs enabled locally by default; production requires ENABLE_API_DOCS=true
-  const docsEnabled =
-    process.env.ENABLE_API_DOCS === 'true' ||
-    process.env.NODE_ENV !== 'production';
+  // Local: on by default. Azure / production: off unless ENABLE_API_DOCS=true
+  const docsEnabled = apiDocsEnabled();
   if (docsEnabled) {
     // JSON only at /api/docs-json — the branded UI page is AppController GET /api/docs
     SwaggerModule.setup('api/docs', app, document, {

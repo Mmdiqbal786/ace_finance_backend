@@ -8,6 +8,9 @@ docs/Architecture/
 ├── Aceolution_Finance_Architecture.pdf
 ├── aceolution_finance_architecture.md
 ├── AUTH_LIVE_DEMO_STORES.md
+├── VAPT_SCOPE.md
+├── INTERNAL_VAPT_CHECKLIST.md
+├── BACKUP_AND_RESTORE.md
 ├── templates/
 ├── scripts/
 └── README.md
@@ -39,7 +42,13 @@ PDF: https://finance.aceolution.com/architecture/Aceolution_Finance_Architecture
 4. [**`VAPT_SCOPE.md`**](./VAPT_SCOPE.md)
    - Formal VAPT engagement brief: targets, in/out of scope, Microsoft ROE, pre-flight checklist.
 
-5. [**`BACKUP_AND_RESTORE.md`**](./BACKUP_AND_RESTORE.md)
+5. [**`INTERNAL_VAPT_CHECKLIST.md`**](./INTERNAL_VAPT_CHECKLIST.md)
+   - How to run internal VAPT without a vendor: steps, checklist IDs, evidence folder, report template.
+
+6. [**`INTERNAL_VAPT_REPORT_2026-10-29.md`**](./INTERNAL_VAPT_REPORT_2026-10-29.md)
+   - Filled internal VAPT run (2026-10-29): results + findings (Swagger High).
+
+7. [**`BACKUP_AND_RESTORE.md`**](./BACKUP_AND_RESTORE.md)
    - Full package: Atlas DB backup, Azure blob soft delete/versioning, App Service backup, restore drills.
 
 ---

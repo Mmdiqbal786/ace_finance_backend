@@ -20,12 +20,10 @@ import { ApiSopResponses } from './common/swagger/api-sop';
 import { getOpenApiDocument } from './common/swagger/openapi-store';
 import { HEALTH_DATA } from './common/swagger/sop-data-samples';
 import { DEMO_CONNECTION } from './common/store/store.constants';
+import { apiDocsEnabled } from './common/api-docs-enabled';
 
 function assertApiDocsEnabled() {
-  const enabled =
-    process.env.ENABLE_API_DOCS === 'true' ||
-    process.env.NODE_ENV !== 'production';
-  if (!enabled) {
+  if (!apiDocsEnabled()) {
     throw new NotFoundException('API docs are disabled on this environment.');
   }
 }
@@ -43,10 +41,7 @@ export class AppController {
   @ApiExcludeEndpoint()
   @Header('Content-Type', 'text/html; charset=utf-8')
   getHome(): string {
-    const docsEnabled =
-      process.env.ENABLE_API_DOCS === 'true' ||
-      process.env.NODE_ENV !== 'production';
-    if (!docsEnabled) {
+    if (!apiDocsEnabled()) {
       return this.appService.getWelcomePage(null);
     }
     return this.appService.getWelcomePage(getOpenApiDocument());

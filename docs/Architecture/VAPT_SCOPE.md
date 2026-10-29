@@ -2,7 +2,7 @@
 
 Last updated: 2026-10-28  
 Owner: Aceolution Finance team  
-Related: [`AUTH_LIVE_DEMO_STORES.md`](./AUTH_LIVE_DEMO_STORES.md) · Microsoft [Cloud Unified Penetration Testing Rules of Engagement](https://www.microsoft.com/en-us/msrc/pentest-rules-of-engagement)
+Related: [`AUTH_LIVE_DEMO_STORES.md`](./AUTH_LIVE_DEMO_STORES.md) · [`INTERNAL_VAPT_CHECKLIST.md`](./INTERNAL_VAPT_CHECKLIST.md) (runbook if no vendor) · Microsoft [Cloud Unified Penetration Testing Rules of Engagement](https://www.microsoft.com/en-us/msrc/pentest-rules-of-engagement)
 
 ## 1. Targets (in scope)
 
