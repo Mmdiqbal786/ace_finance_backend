@@ -29,7 +29,7 @@ export function assertDemoAccessCode(provided?: string | null): void {
   const got = (provided || '').trim();
   if (!got || !safeEqualString(got, expected)) {
     throw new UnauthorizedException(
-      'Invalid or missing demo access code. Unlock the demo guide first, or send X-Demo-Access-Code.',
+      'Invalid or missing demo access code. Unlock the demo guide first, then try again.',
     );
   }
 }

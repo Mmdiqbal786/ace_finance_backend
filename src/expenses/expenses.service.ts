@@ -880,8 +880,9 @@ export class ExpensesService {
   }
 
   /**
-   * Signed-in viewers only — full expense if authorized (otherwise Forbidden).
-   * No anonymous / public track (avoids existence + status enumeration).
+   * Signed-in viewers only — full expense if authorized.
+   * Unauthorized viewers get the same 404 as a missing id (no existence oracle).
+   * No anonymous / public track.
    */
   async findOneForViewer(
     id: string,
@@ -890,8 +891,38 @@ export class ExpensesService {
     if (!actingUser?.email) {
       throw new ForbiddenException('You must be signed in to view this expense.');
     }
-    const expense = await this.findOne(id);
-    await this.assertCanViewExpense(expense, actingUser);
+    const expense = await this.expenseModel.findOne({ id }).lean().exec();
+    if (!expense) {
+      throw new NotFoundException(`Expense with ID ${id} not found`);
+    }
+    try {
+      await this.assertCanViewExpense(expense, actingUser);
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        throw new NotFoundException(`Expense with ID ${id} not found`);
+      }
+      throw err;
+    }
+    return expense;
+  }
+
+  /** Load expense for attachment download; deny with 404 when viewer lacks access. */
+  private async loadExpenseForAuthorizedViewer(
+    id: string,
+    actingUser: ActingUser,
+  ): Promise<Expense> {
+    const expense = await this.expenseModel.findOne({ id }).lean().exec();
+    if (!expense) {
+      throw new NotFoundException(`Expense with ID ${id} not found`);
+    }
+    try {
+      await this.assertCanViewExpense(expense, actingUser);
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        throw new NotFoundException(`Expense with ID ${id} not found`);
+      }
+      throw err;
+    }
     return expense;
   }
 
@@ -1769,10 +1800,7 @@ export class ExpensesService {
     originalName: string;
     mimeType: string;
   }> {
-    const expense = await this.expenseModel.findOne({ id }).lean().exec();
-    if (!expense)
-      throw new NotFoundException(`Expense with ID ${id} not found`);
-    await this.assertCanViewExpense(expense, actingUser);
+    const expense = await this.loadExpenseForAuthorizedViewer(id, actingUser);
     if (!expense.invoiceFileName) {
       throw new NotFoundException('No invoice attached to this expense.');
     }
@@ -1801,10 +1829,7 @@ export class ExpensesService {
     originalName: string;
     mimeType: string;
   }> {
-    const expense = await this.expenseModel.findOne({ id }).lean().exec();
-    if (!expense)
-      throw new NotFoundException(`Expense with ID ${id} not found`);
-    await this.assertCanViewExpense(expense, actingUser);
+    const expense = await this.loadExpenseForAuthorizedViewer(id, actingUser);
 
     const receipt = (expense.paymentReceipts || []).find(
       (r) => r.fileName === fileName,
