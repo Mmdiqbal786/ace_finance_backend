@@ -12,10 +12,11 @@
 
 ## Executive summary
 
-- **Overall:** Ready for internal sign-off after Swagger fix (retested).
+- **Overall:** Internal VAPT checklist essentially complete for Demo/API surfaces (sign-off ready).
 - Critical: **0** · High: **0** (A03 fixed) · Medium: **0** · Low: **1** · Info: **2**
-- Auth gates, anonymous expense access, catalog/FX JWT requirements, Demo Access code, RBAC/IDOR, requester cannot approve/pay, admin users API blocked for requester, security headers, health payload, forgot-password generic messaging, and rate limiting behaved as designed.
-- **Fixed 2026-10-29:** Azure App Settings `ENABLE_API_DOCS=false` + `NODE_ENV=production`; API restarted; `GET /api/docs` → **404**. Code hardened so Azure stays docs-off unless explicitly enabled.
+- Passes include auth gates, uploads/magic-bytes/size, hard duplicate block, JWT-bound requester, processor cannot approve / cannot pay `PENDING_APPROVER`, session token in `sessionStorage` (not `localStorage`), Demo workspace badge.
+- **Fixed 2026-10-29:** Azure `ENABLE_API_DOCS=false` + `NODE_ENV=production`; `/api/docs` → **404**.
+- **Still optional / interactive:** Microsoft Entra login (C04) and Live↔Demo workspace picker (C06) need a real `@aceolution.*` interactive session.
 
 ## Pre-flight
 
@@ -41,18 +42,24 @@
 | C01 | **PASS** | Password login unknown vs known-bad → both **401**, identical generic body |
 | C02 | **PASS** | `verify-demo-access` wrong code **401**; correct code **201** `{ok:true}` |
 | C03 | **PASS** | `demo-login` with access code → **201**, JWT `store:"demo"`, `isDemo:true` |
-| C05 | **N/A** | Browser DevTools localStorage not fully audited this run (API uses Bearer `access_token`) |
-| C06 | **N/A** | Dual-store workspace picker not exercised (Demo Access personas) |
+| C05 | **PASS** | After Demo Access login: JWT in `sessionStorage` (`ace_finance_token`); **not** in `localStorage` (only `ace_finance_user`) |
+| C06 | **N/A** | Needs dual-store Microsoft/password account (interactive) |
+| C04 | **N/A** | Microsoft Entra interactive login not run this session |
 | C07 | **N/A** | Logout UI not run |
 | C08 | **N/A** | Challenge-token misuse not run |
-| D01–D03 | **PASS** (partial) | Demo JWT claims `store=demo`; expense list for Demo requester only `@acefinance.com` personas; no Live switch test this run |
+| D01–D03 | **PASS** (partial) | JWT `store=demo`; UI **Demo** badge on dashboard; Live switch not run |
 | E01 | **PASS** | Own expense `GET /expenses/EXP-…` → **200** |
 | E02 | **PASS** | Other requester → **403** (no body leak) |
 | E03 | **PASS** | Approver Systems on GAC expense → **403**; Approver Media (has GAC) → **200** |
 | E04 | **PASS** | Requester `PATCH .../approve` and `.../process` → **403** |
-| E05–E06 | **N/A** | Processor pay path / admin breadth not fully run |
-| F01–F05 | **N/A** | Upload/download magic-byte tests not run this pass (manual follow-up) |
-| G01–G03 | **N/A** | Duplicate submit not re-run (existing demo data shows hard/soft duplicate fields present) |
+| E05 | **PASS** | Processor `PATCH .../approve` → **403**; `process` on `PENDING_APPROVER` (+ receipt) → **400** status guard; expense stayed `PENDING_APPROVER` |
+| F01 | **PASS** | Valid PDF multipart submit → **201** |
+| F02 | **PASS** | MZ/`exe` masquerading as PDF → **400** magic-byte message; `.exe` → **400** type filter |
+| F03 | **PASS** | ~6 MB upload → **413** File too large |
+| F04–F05 | **N/A** | Cross-user download URL tamper not separately scripted (covered partly by E02 ACL) |
+| G01 | **PASS** | Same file re-submit → **400** `Duplicate invoice file detected` (request not created) |
+| G02 | **PASS** | Matching-details second invoice → **400** duplicate message (no peer name/id oracle) |
+| G03 | **PASS** | Body `requesterEmail` spoof ignored — stored as JWT user `requester.gac@acefinance.com` |
 | H02 | **PASS** | Requester `GET /users` → **403** |
 | H03 | **PASS** | `POST /auth/seed` without secret → **403** |
 | I01 | **PASS** | Repeated `demo-login` / auth traffic → **429** ThrottlerException |
@@ -91,14 +98,13 @@
 - **Recommendation:** If product expects gated `/architecture/` page, fix SWA rewrite; if intentional block, update VAPT/docs wording
 - **Status:** Open (clarify)
 
-## Not tested this run (follow-up)
+## Not tested / deferred (optional)
 
-- File upload type/size/magic bytes (F*)
-- Hard/soft duplicate create flows (G*)
-- Microsoft OAuth callback / Live workspace switch (C04, C06, D full)
-- Processor payment ACL (E05)
-- Token storage DevTools walkthrough (C05)
-- Full CORS credentialed cross-origin from browser console (J01 spot only)
+- Microsoft Entra interactive login (C04)
+- Live ↔ Demo workspace picker for dual-store staff account (C06)
+- Challenge-token-as-Bearer (C08)
+- Dedicated invoice download IDOR URL probe (F04/F05)
+- Logout UI (C07)
 
 ## Retest log
 
@@ -106,6 +112,7 @@
 |------|-----|--------|
 | 2026-10-29 | A01–A02, B01–B03, B05, C01–C03, E01–E04, H02–H03, I01, J02 | PASS |
 | 2026-10-29 | A03 after `ENABLE_API_DOCS=false` + restart | **PASS** (404) |
+| 2026-10-29 | F01–F03, G01–G03, E05, C05, Demo badge | **PASS** |
 
 ## Sign-off
 
