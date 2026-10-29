@@ -13,7 +13,7 @@
 ## Executive summary
 
 - **Overall:** **Complete** for internal sign-off — all checklist IDs exercised; **no remaining N/A**.
-- Critical: **0** · High: **0** (Swagger fixed) · Medium: **0** · Low: **0** (F-2 fixed in code — retest after API deploy) · Info: **0** (F-3 fixed in code — retest after API deploy)
+- Critical: **0** · High: **0** (Swagger fixed) · Medium: **0** · Low: **0** · Info: **0**
 - Microsoft login **C04** verified end-to-end (Entra password + Authenticator MFA → Choose Workspace → Live dashboard).
 
 ## Pre-flight
@@ -52,7 +52,7 @@
 | C08 | **PASS** | `workspaceToken` as Bearer → **401**; OTP `challengeToken` (`purpose:login_2fa`) as Bearer → **401** |
 | D01–D03 | **PASS** | Demo badge + JWT demo; Live UI pick → **Live** label + JWT `store=live`; counts differ Live vs Demo |
 | E01 | **PASS** | Own expense GET → 200 |
-| E02 | **PASS** | Peer expense → 403 (pre-fix); post-deploy expect **404** same as missing (F-2) |
+| E02 | **PASS** | Peer expense → **404** (same as missing; F-2 fix live) |
 | E03 | **PASS** | Approver project scope 403 / 200 as expected |
 | E04 | **PASS** | Requester cannot approve/process → 403 |
 | E05 | **PASS** | Processor cannot approve → 403; cannot pay PENDING → 400 status guard |
@@ -61,7 +61,7 @@
 | F02 | **PASS** | Magic-byte / exe reject → 400 |
 | F03 | **PASS** | Oversized → 413 |
 | F04 | **PASS** | Own `GET /expenses/:id/invoice` → 200 |
-| F05 | **PASS** | Peer invoice → **403**; anon → **401** (peer → **404** after F-2 deploy) |
+| F05 | **PASS** | Peer invoice → **404**; anon → **401** |
 | G01 | **PASS** | Hard duplicate file → 400 |
 | G02 | **PASS** | Matching-details duplicate → 400 (no peer oracle) |
 | G03 | **PASS** | Spoofed requester email ignored (JWT-bound) |
@@ -79,16 +79,16 @@
 - **Severity:** High → **Fixed** (App Settings + restart; code gate `api-docs-enabled.ts`)
 
 ### F-2 — Authenticated expense ID existence oracle (403 vs 404)
-- **Severity:** Low → **Fixed in code** (`findOneForViewer` / invoice+receipt load return same 404 as missing)
-- **Status:** Pending live retest after API deploy (pre-deploy peer=403, missing=404)
+- **Severity:** Low → **Fixed** (`findOneForViewer` / invoice+receipt → same **404** as missing)
+- **Status:** Retest PASS on live (`59c5d68` Active) — peer GET + invoice **404**, missing **404**
 
 ### F-3 — Demo-guide error mentions `X-Demo-Access-Code`
-- **Severity:** Info → **Fixed in code** (generic unlock message in `demo-access.util.ts`)
-- **Status:** Pending live retest after API deploy (pre-deploy still named header)
+- **Severity:** Info → **Fixed** (generic unlock message in `demo-access.util.ts`)
+- **Status:** Retest PASS on live — wrong code returns unlock message **without** header name
 
 ## Residual (not a checklist N/A)
 
-- None for checklist coverage. After API deploy: retest F-2 (peer GET → 404) and F-3 (wrong code message without header name).
+- None.
 
 ## Retest log
 
@@ -100,7 +100,7 @@
 | 2026-10-29 | C07 logout, C08 purpose JWT, F04/F05 invoice IDOR, D Live UI | PASS |
 | 2026-10-29 | C04 full Microsoft MFA → workspace → Live dashboard | PASS |
 | 2026-10-29 | E06, H01, I02, J01 + pre-flight P1/P3/P4/P7/P9 | PASS |
-| 2026-10-29 | F-2 / F-3 code fixes | Pending deploy retest |
+| 2026-10-29 | F-2 / F-3 live retest after `59c5d68` | PASS |
 
 ## Sign-off
 
