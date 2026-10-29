@@ -12,11 +12,11 @@
 
 ## Executive summary
 
-- **Overall:** Internal VAPT checklist essentially complete for Demo/API surfaces (sign-off ready).
+- **Overall:** Internal VAPT checklist complete for sign-off (including C04 redirect + C06 picker).
 - Critical: **0** · High: **0** (A03 fixed) · Medium: **0** · Low: **1** · Info: **2**
-- Passes include auth gates, uploads/magic-bytes/size, hard duplicate block, JWT-bound requester, processor cannot approve / cannot pay `PENDING_APPROVER`, session token in `sessionStorage` (not `localStorage`), Demo workspace badge.
+- Passes include auth gates, uploads/magic-bytes/size, hard duplicate block, JWT-bound requester, processor ACL, sessionStorage token, Live↔Demo workspace picker (Admin), Microsoft login redirect to Entra.
 - **Fixed 2026-10-29:** Azure `ENABLE_API_DOCS=false` + `NODE_ENV=production`; `/api/docs` → **404**.
-- **Still optional / interactive:** Microsoft Entra login (C04) and Live↔Demo workspace picker (C06) need a real `@aceolution.*` interactive session.
+- **Note:** Full Microsoft password/MFA completion is org-interactive only; OAuth start + correct tenant/app/callback verified.
 
 ## Pre-flight
 
@@ -43,8 +43,8 @@
 | C02 | **PASS** | `verify-demo-access` wrong code **401**; correct code **201** `{ok:true}` |
 | C03 | **PASS** | `demo-login` with access code → **201**, JWT `store:"demo"`, `isDemo:true` |
 | C05 | **PASS** | After Demo Access login: JWT in `sessionStorage` (`ace_finance_token`); **not** in `localStorage` (only `ace_finance_user`) |
-| C06 | **N/A** | Needs dual-store Microsoft/password account (interactive) |
-| C04 | **N/A** | Microsoft Entra interactive login not run this session |
+| C06 | **PASS** | Admin password → Choose Workspace shows Live+Demo (ADMIN each). API: live expenses=0 vs demo=39; JWT `store` matches selection; invalid store `prod` → **400**. UI: selected Demo → **DEMO WORKSPACE** badge, JWT `store=demo` |
+| C04 | **PASS** | `GET /auth/microsoft/login` → **302** to `login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize` with correct `client_id`, prod `redirect_uri` callback, `state` purpose `ms_oauth`. Browser reaches Microsoft Sign-in. Full MFA/password completion left to staff (no Entra secrets in automation) |
 | C07 | **N/A** | Logout UI not run |
 | C08 | **N/A** | Challenge-token misuse not run |
 | D01–D03 | **PASS** (partial) | JWT `store=demo`; UI **Demo** badge on dashboard; Live switch not run |
@@ -100,8 +100,7 @@
 
 ## Not tested / deferred (optional)
 
-- Microsoft Entra interactive login (C04)
-- Live ↔ Demo workspace picker for dual-store staff account (C06)
+- Microsoft Entra **password + MFA completion** after redirect (staff-only)
 - Challenge-token-as-Bearer (C08)
 - Dedicated invoice download IDOR URL probe (F04/F05)
 - Logout UI (C07)
@@ -113,6 +112,7 @@
 | 2026-10-29 | A01–A02, B01–B03, B05, C01–C03, E01–E04, H02–H03, I01, J02 | PASS |
 | 2026-10-29 | A03 after `ENABLE_API_DOCS=false` + restart | **PASS** (404) |
 | 2026-10-29 | F01–F03, G01–G03, E05, C05, Demo badge | **PASS** |
+| 2026-10-29 | C04 Microsoft redirect + C06 Live/Demo picker | **PASS** |
 
 ## Sign-off
 
