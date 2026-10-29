@@ -188,9 +188,13 @@ export class AuthController {
       if (!accessToken) {
         return fail('Microsoft sign-in did not return a session. Try again.');
       }
-      // httpOnly cookie — avoid putting the session JWT in the URL (logs / history).
+      // Cookie for same-site / future proxy setups + hash token for cross-site SWA→API
+      // (third-party cookies are often blocked; FE stores hash token in sessionStorage).
       maybeAttachAccessCookie(res, { access_token: accessToken });
-      return res.redirect(HttpStatus.FOUND, `${frontend}/login/?ms_ok=1`);
+      return res.redirect(
+        HttpStatus.FOUND,
+        `${frontend}/login/?ms_ok=1#ms_token=${encodeURIComponent(accessToken)}`,
+      );
     } catch (err: any) {
       const message =
         typeof err?.message === 'string' && err.message.length < 180
