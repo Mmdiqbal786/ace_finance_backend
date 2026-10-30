@@ -48,7 +48,7 @@ Logins used (seeded accounts) — runner uses **Demo Access** for personas and a
 | API | `npm run test:api:vapt` | Authz, IDOR→404, uploads, duplicates, Swagger off, CORS, demo gate, … |
 | UI | (frontend) `npm run test:e2e` / `test:e2e:vapt` | A02 headers, B03/B04 gates, Demo Access C03/C05/C07, Microsoft OAuth **start** |
 
-**Still human:** C04 Authenticator **number-match** when Entra prompts a fresh MFA challenge.
+**C04 fresh MFA:** frontend `npm run test:e2e:mfa` with `MS_E2E_PASSWORD` — forces `?prompt=login` and waits for Authenticator number-match (headed).
 
 **Postman collection:** regenerate after API guide changes with `npm run postman:generate` (needs local `nest build`). Live `/api/docs` stays **404** in production — use Postman file or local Swagger with `ENABLE_API_DOCS=true`.
 

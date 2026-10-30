@@ -117,7 +117,13 @@ export class MicrosoftAuthService {
     }
   }
 
-  buildAuthorizeUrl(): { url: string } {
+  /**
+   * @param prompt Entra `prompt` — default `select_account`.
+   * Use `login` to force password + MFA (E2E / VAPT fresh Authenticator challenge).
+   */
+  buildAuthorizeUrl(prompt: 'select_account' | 'login' = 'select_account'): {
+    url: string;
+  } {
     this.assertConfigured();
     const state = this.jwtService.sign(
       {
@@ -133,7 +139,7 @@ export class MicrosoftAuthService {
       response_mode: 'query',
       scope: SCOPES,
       state,
-      prompt: 'select_account',
+      prompt,
     });
     return {
       url: `https://login.microsoftonline.com/${this.tenant()}/oauth2/v2.0/authorize?${params}`,

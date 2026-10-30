@@ -104,11 +104,22 @@ export class AuthController {
     description: howWhy({
       why: 'Company Microsoft / Entra login (same pattern as ACE Outsource).',
       how: 'Browser GET → 302 to login.microsoftonline.com. After success Microsoft returns to /auth/microsoft/callback.',
+      extras:
+        'Optional query `?prompt=login` forces a fresh password + MFA challenge (used by Playwright VAPT MFA e2e). Default remains `select_account`.',
     }),
   })
-  microsoftLogin(@Res() res: Response) {
+  microsoftLogin(
+    @Res() res: Response,
+    @Query('prompt') prompt?: string,
+  ) {
     try {
-      const { url } = this.microsoftAuth.buildAuthorizeUrl();
+      const forceLogin =
+        String(prompt || '')
+          .trim()
+          .toLowerCase() === 'login';
+      const { url } = this.microsoftAuth.buildAuthorizeUrl(
+        forceLogin ? 'login' : 'select_account',
+      );
       return res.redirect(HttpStatus.FOUND, url);
     } catch (err: any) {
       const frontend = this.microsoftAuth.frontendUrl();
