@@ -3113,7 +3113,7 @@
           ]
         },
         {
-          "name": "Submit expense (public, multipart)",
+          "name": "Submit expense (Bearer, multipart)",
           "request": {
             "method": "POST",
             "header": [],
@@ -3126,9 +3126,6 @@
                 "expenses"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
             "body": {
               "mode": "formdata",
               "formdata": [
@@ -3136,13 +3133,13 @@
                   "key": "requesterName",
                   "value": "Requester GAC",
                   "type": "text",
-                  "description": "[Required]"
+                  "description": "[Optional] Display name (JWT is source of truth)"
                 },
                 {
                   "key": "requesterEmail",
                   "value": "requester.gac@acefinance.com",
                   "type": "text",
-                  "description": "[Required] Requesters must be assigned to the project"
+                  "description": "[Ignored] Requester email is taken from the Bearer JWT"
                 },
                 {
                   "key": "originalAmount",
@@ -3212,7 +3209,7 @@
                 }
               ]
             },
-            "description": "**Why:** Requester raises a new expense with its invoice.\n\n**How:** Pick a file for `invoice`, Send → Tests script saves `expenseId`. Approvers of the project are emailed.\n\n**Hard duplicate** (same file / invoice #) → 400, request not created. **Potential duplicate** → 400 `POTENTIAL_DUPLICATE:…` unless `duplicateConfirmed=true`. Use **Check duplicate** first."
+            "description": "**Why:** Requester raises a new expense with its invoice.\n\n**How:** Authorize as REQUESTER → pick a file for `invoice` → Send. Tests script saves `expenseId`. Approvers of the project are emailed.\n\n**Hard duplicate** (same file / invoice #) → 400, request not created. **Potential duplicate** → 400 `POTENTIAL_DUPLICATE:…` unless `duplicateConfirmed=true`. Use **Check duplicate** first."
           },
           "event": [
             {
@@ -3253,9 +3250,6 @@
                     "expenses"
                   ]
                 },
-                "auth": {
-                  "type": "noauth"
-                },
                 "body": {
                   "mode": "formdata",
                   "formdata": [
@@ -3263,13 +3257,13 @@
                       "key": "requesterName",
                       "value": "Requester GAC",
                       "type": "text",
-                      "description": "[Required]"
+                      "description": "[Optional] Display name (JWT is source of truth)"
                     },
                     {
                       "key": "requesterEmail",
                       "value": "requester.gac@acefinance.com",
                       "type": "text",
-                      "description": "[Required] Requesters must be assigned to the project"
+                      "description": "[Ignored] Requester email is taken from the Bearer JWT"
                     },
                     {
                       "key": "originalAmount",
@@ -3366,9 +3360,6 @@
                     "expenses"
                   ]
                 },
-                "auth": {
-                  "type": "noauth"
-                },
                 "body": {
                   "mode": "formdata",
                   "formdata": [
@@ -3376,13 +3367,13 @@
                       "key": "requesterName",
                       "value": "Requester GAC",
                       "type": "text",
-                      "description": "[Required]"
+                      "description": "[Optional] Display name (JWT is source of truth)"
                     },
                     {
                       "key": "requesterEmail",
                       "value": "requester.gac@acefinance.com",
                       "type": "text",
-                      "description": "[Required] Requesters must be assigned to the project"
+                      "description": "[Ignored] Requester email is taken from the Bearer JWT"
                     },
                     {
                       "key": "originalAmount",
@@ -3479,9 +3470,6 @@
                     "expenses"
                   ]
                 },
-                "auth": {
-                  "type": "noauth"
-                },
                 "body": {
                   "mode": "formdata",
                   "formdata": [
@@ -3489,13 +3477,13 @@
                       "key": "requesterName",
                       "value": "Requester GAC",
                       "type": "text",
-                      "description": "[Required]"
+                      "description": "[Optional] Display name (JWT is source of truth)"
                     },
                     {
                       "key": "requesterEmail",
                       "value": "requester.gac@acefinance.com",
                       "type": "text",
-                      "description": "[Required] Requesters must be assigned to the project"
+                      "description": "[Ignored] Requester email is taken from the Bearer JWT"
                     },
                     {
                       "key": "originalAmount",
@@ -3592,8 +3580,115 @@
                     "expenses"
                   ]
                 },
-                "auth": {
-                  "type": "noauth"
+                "body": {
+                  "mode": "formdata",
+                  "formdata": [
+                    {
+                      "key": "requesterName",
+                      "value": "Requester GAC",
+                      "type": "text",
+                      "description": "[Optional] Display name (JWT is source of truth)"
+                    },
+                    {
+                      "key": "requesterEmail",
+                      "value": "requester.gac@acefinance.com",
+                      "type": "text",
+                      "description": "[Ignored] Requester email is taken from the Bearer JWT"
+                    },
+                    {
+                      "key": "originalAmount",
+                      "value": "1500",
+                      "type": "text",
+                      "description": "[Required] Amount in the country currency"
+                    },
+                    {
+                      "key": "country",
+                      "value": "India",
+                      "type": "text",
+                      "description": "[Required] Name from GET /countries/active"
+                    },
+                    {
+                      "key": "category",
+                      "value": "Travel",
+                      "type": "text",
+                      "description": "[Required] Name from GET /categories/active"
+                    },
+                    {
+                      "key": "project",
+                      "value": "Google Art and culture (GAC)",
+                      "type": "text",
+                      "description": "[Required] Name from GET /projects/active"
+                    },
+                    {
+                      "key": "description",
+                      "value": "Client visit travel",
+                      "type": "text",
+                      "description": "[Required]"
+                    },
+                    {
+                      "key": "date",
+                      "value": "2026-10-01",
+                      "type": "text",
+                      "description": "[Required] YYYY-MM-DD"
+                    },
+                    {
+                      "key": "dueDate",
+                      "value": "2026-10-15",
+                      "type": "text",
+                      "description": "[Required] On/after date"
+                    },
+                    {
+                      "key": "invoiceNumber",
+                      "value": "INV-1001",
+                      "type": "text",
+                      "description": "[Optional]"
+                    },
+                    {
+                      "key": "invoiceDate",
+                      "value": "2026-09-30",
+                      "type": "text",
+                      "description": "[Optional]"
+                    },
+                    {
+                      "key": "duplicateConfirmed",
+                      "value": "false",
+                      "type": "text",
+                      "description": "[Optional] true = proceed past potential-duplicate warning"
+                    },
+                    {
+                      "key": "invoice",
+                      "type": "file",
+                      "src": [],
+                      "description": "[Required] PDF / JPG / PNG / WEBP / GIF, max 5 MB — click \"Select Files\""
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Unauthorized\",\n  \"error\": \"Unauthorized\"\n}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/expenses",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "expenses"
+                  ]
                 },
                 "body": {
                   "mode": "formdata",
@@ -3602,13 +3697,13 @@
                       "key": "requesterName",
                       "value": "Requester GAC",
                       "type": "text",
-                      "description": "[Required]"
+                      "description": "[Optional] Display name (JWT is source of truth)"
                     },
                     {
                       "key": "requesterEmail",
                       "value": "requester.gac@acefinance.com",
                       "type": "text",
-                      "description": "[Required] Requesters must be assigned to the project"
+                      "description": "[Ignored] Requester email is taken from the Bearer JWT"
                     },
                     {
                       "key": "originalAmount",
@@ -3705,9 +3800,6 @@
                     "expenses"
                   ]
                 },
-                "auth": {
-                  "type": "noauth"
-                },
                 "body": {
                   "mode": "formdata",
                   "formdata": [
@@ -3715,13 +3807,13 @@
                       "key": "requesterName",
                       "value": "Requester GAC",
                       "type": "text",
-                      "description": "[Required]"
+                      "description": "[Optional] Display name (JWT is source of truth)"
                     },
                     {
                       "key": "requesterEmail",
                       "value": "requester.gac@acefinance.com",
                       "type": "text",
-                      "description": "[Required] Requesters must be assigned to the project"
+                      "description": "[Ignored] Requester email is taken from the Bearer JWT"
                     },
                     {
                       "key": "originalAmount",
@@ -3796,7 +3888,7 @@
           ]
         },
         {
-          "name": "Track expense by ID (public)",
+          "name": "Get expense by ID (Bearer)",
           "request": {
             "method": "GET",
             "header": [],
@@ -3810,10 +3902,7 @@
                 "{{expenseId}}"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "**Why:** Public tracking page / request detail.\n\n**How:** No auth. Includes the `history` timeline."
+            "description": "**Why:** Request detail for an authorized viewer.\n\n**How:** Bearer required. Unauthorized peer / missing id → **404** (same message; no existence oracle). Includes `history`."
           },
           "event": [
             {
@@ -3854,9 +3943,6 @@
                     "expenses",
                     "{{expenseId}}"
                   ]
-                },
-                "auth": {
-                  "type": "noauth"
                 }
               }
             },
@@ -3885,9 +3971,90 @@
                     "expenses",
                     "{{expenseId}}"
                   ]
-                },
-                "auth": {
-                  "type": "noauth"
+                }
+              }
+            },
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Unauthorized\",\n  \"error\": \"Unauthorized\"\n}",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/expenses/{{expenseId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "expenses",
+                    "{{expenseId}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "403 Forbidden",
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 403,\n  \"message\": \"You do not have access to this expense.\",\n  \"error\": \"Forbidden\"\n}",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/expenses/{{expenseId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "expenses",
+                    "{{expenseId}}"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 404,\n  \"message\": \"Expense with ID EXP-1790000000000-1234 not found\",\n  \"error\": \"Not Found\"\n}",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/expenses/{{expenseId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "expenses",
+                    "{{expenseId}}"
+                  ]
                 }
               }
             }
@@ -7662,10 +7829,10 @@
     },
     {
       "name": "Projects",
-      "description": "**Why:** Project dropdown + approver/requester scoping. **How:** GET /projects/active (public); ADMIN CRUD on /projects.\n**When:** Request form dropdowns; Admin → Projects.",
+      "description": "**Why:** Project dropdown + approver/requester scoping. **How:** GET /projects/active (Bearer); ADMIN CRUD on /projects.\n**When:** Request form dropdowns; Admin → Projects.",
       "item": [
         {
-          "name": "Active projects (public)",
+          "name": "Active projects (Bearer)",
           "request": {
             "method": "GET",
             "header": [],
@@ -7679,10 +7846,7 @@
                 "active"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "**Why:** Dropdown on the request form.\n\n**How:** No auth. Send the `name` on POST /expenses."
+            "description": "**Why:** Dropdown on the request form.\n\n**How:** Bearer required. Send the `name` on POST /expenses."
           },
           "response": [
             {
@@ -7710,9 +7874,34 @@
                     "projects",
                     "active"
                   ]
-                },
-                "auth": {
-                  "type": "noauth"
+                }
+              }
+            },
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Unauthorized\",\n  \"error\": \"Unauthorized\"\n}",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/projects/active",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "projects",
+                    "active"
+                  ]
                 }
               }
             }
@@ -8491,10 +8680,10 @@
     },
     {
       "name": "Categories",
-      "description": "**Why:** Expense category dropdown. **How:** GET /categories/active (public); ADMIN CRUD on /categories.\n**When:** Request form dropdowns; Admin → Categories.",
+      "description": "**Why:** Expense category dropdown. **How:** GET /categories/active (Bearer); ADMIN CRUD on /categories.\n**When:** Request form dropdowns; Admin → Categories.",
       "item": [
         {
-          "name": "Active categories (public)",
+          "name": "Active categories (Bearer)",
           "request": {
             "method": "GET",
             "header": [],
@@ -8508,10 +8697,7 @@
                 "active"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "**Why:** Dropdown on the request form.\n\n**How:** No auth. Send the `name` on POST /expenses."
+            "description": "**Why:** Dropdown on the request form.\n\n**How:** Bearer required. Send the `name` on POST /expenses."
           },
           "response": [
             {
@@ -8539,9 +8725,34 @@
                     "categories",
                     "active"
                   ]
-                },
-                "auth": {
-                  "type": "noauth"
+                }
+              }
+            },
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Unauthorized\",\n  \"error\": \"Unauthorized\"\n}",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/categories/active",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "categories",
+                    "active"
+                  ]
                 }
               }
             }
@@ -9320,10 +9531,10 @@
     },
     {
       "name": "Countries",
-      "description": "**Why:** Country dropdown + currency for USD conversion. **How:** GET /countries/active (public); ADMIN CRUD on /countries.\n**When:** Request form dropdowns; Admin → Countries.",
+      "description": "**Why:** Country dropdown + currency for USD conversion. **How:** GET /countries/active (Bearer); ADMIN CRUD on /countries.\n**When:** Request form dropdowns; Admin → Countries.",
       "item": [
         {
-          "name": "Active countries (public)",
+          "name": "Active countries (Bearer)",
           "request": {
             "method": "GET",
             "header": [],
@@ -9337,10 +9548,7 @@
                 "active"
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "**Why:** Dropdown on the request form.\n\n**How:** No auth. Send the `name` on POST /expenses."
+            "description": "**Why:** Dropdown on the request form.\n\n**How:** Bearer required. Send the `name` on POST /expenses."
           },
           "response": [
             {
@@ -9368,9 +9576,34 @@
                     "countries",
                     "active"
                   ]
-                },
-                "auth": {
-                  "type": "noauth"
+                }
+              }
+            },
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Unauthorized\",\n  \"error\": \"Unauthorized\"\n}",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/countries/active",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "countries",
+                    "active"
+                  ]
                 }
               }
             }
@@ -10525,10 +10758,10 @@
     },
     {
       "name": "FX",
-      "description": "**Why:** Live USD preview on the request form. **How:** GET /fx/convert?currency=INR&amount=1500 (today's rate, public).\n**When:** Typing an amount on the request form.",
+      "description": "**Why:** Live USD preview on the request form. **How:** GET /fx/convert?currency=INR&amount=1500 (Bearer; today's rate).\n**When:** Typing an amount on the request form.",
       "item": [
         {
-          "name": "Convert to USD (public)",
+          "name": "Convert to USD (Bearer)",
           "request": {
             "method": "GET",
             "header": [],
@@ -10556,10 +10789,7 @@
                 }
               ]
             },
-            "auth": {
-              "type": "noauth"
-            },
-            "description": "**Why:** \"≈ $15.63 USD\" preview.\n\n**How:** Today's rate — same conversion stored on submit."
+            "description": "**Why:** \"≈ $15.63 USD\" preview.\n\n**How:** Bearer required. Today's rate — same conversion stored on submit."
           },
           "response": [
             {
@@ -10601,9 +10831,6 @@
                       "disabled": false
                     }
                   ]
-                },
-                "auth": {
-                  "type": "noauth"
                 }
               }
             },
@@ -10646,9 +10873,48 @@
                       "disabled": false
                     }
                   ]
-                },
-                "auth": {
-                  "type": "noauth"
+                }
+              }
+            },
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"statusCode\": 401,\n  \"message\": \"Unauthorized\",\n  \"error\": \"Unauthorized\"\n}",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/fx/convert?currency=INR&amount=1500",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "fx",
+                    "convert"
+                  ],
+                  "query": [
+                    {
+                      "key": "currency",
+                      "value": "INR",
+                      "description": "[Required]",
+                      "disabled": false
+                    },
+                    {
+                      "key": "amount",
+                      "value": "1500",
+                      "description": "[Required]",
+                      "disabled": false
+                    }
+                  ]
                 }
               }
             }

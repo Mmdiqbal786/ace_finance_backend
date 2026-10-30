@@ -27,8 +27,8 @@ set DEMO_ACCESS_CODE=Aceolution_2024
 set TEST_STORE=demo
 
 # Optional
-set EXPECT_API_DOCS=true   # only when Swagger is intentionally on
-set SKIP_THROTTLE=1        # skip I01/I02 rate-limit probes (CI)
+set EXPECT_API_DOCS=true   # only when Swagger is intentionally on (local)
+set RUN_THROTTLE=1         # opt-in I01/I02 rate-limit probes (leaves login hot ~1 min)
 ```
 
 Logins used (seeded accounts) — runner uses **Demo Access** for personas and admin **password → select Demo**:
@@ -43,11 +43,16 @@ Logins used (seeded accounts) — runner uses **Demo Access** for personas and a
 
 ### VAPT automation vs human residual
 
-Automatable checklist IDs run in `vapt` (authz, IDOR→404, uploads, duplicates, throttle, CORS, Swagger off, demo gate, etc.).
+| Layer | Command | Covers |
+|-------|---------|--------|
+| API | `npm run test:api:vapt` | Authz, IDOR→404, uploads, duplicates, Swagger off, CORS, demo gate, … |
+| UI | (frontend) `npm run test:e2e` / `test:e2e:vapt` | A02 headers, B03/B04 gates, Demo Access C03/C05/C07, Microsoft OAuth **start** |
 
-**Still human / browser residual:** C04 full Microsoft MFA number-match; A02 Static Web App document security headers (spot-check).
+**Still human:** C04 Authenticator **number-match** when Entra prompts a fresh MFA challenge.
 
-Also in Postman **Authentication**: Microsoft status, List Demo Access accounts, Demo Access login, Select workspace, Check duplicate (Expenses).
+**Postman collection:** regenerate after API guide changes with `npm run postman:generate` (needs local `nest build`). Live `/api/docs` stays **404** in production — use Postman file or local Swagger with `ENABLE_API_DOCS=true`.
+
+Also in Postman **Authentication**: Microsoft status, List Demo Access accounts, Demo Access login, Select workspace, Check duplicate (Expenses). Catalogs / FX / expense submit require **Bearer**.
 
 Write scenarios submit expenses on project `Google Art and culture (GAC)` (requester must stay assigned to it). Duplicate invoice # / same file → hard 400 (not created).
 
@@ -77,18 +82,16 @@ After **every** write scenario (pass or fail), the runner deletes what it create
 
 ## Swagger + API pages
 
-| Page | Path |
-|------|------|
-| API home | `/` (`/api` redirects here) |
-| Swagger UI (branded) | `/api/docs` (`/docs` redirects here) |
-| OpenAPI spec page + JSON download | `/api/openapi` |
-| OpenAPI JSON | `/api/docs-json` |
-| Health page in a browser (API, database, uptime) | `/health` (also `/status`) |
-| Health JSON (monitors, curl, Postman, tests) | `/health` — non-browser clients get JSON automatically; `?format=json` forces it |
-| Server down preview | `/status/unavailable` |
+| Page | Path | Live prod |
+|------|------|-----------|
+| API home | `/` (`/api` redirects here) | OK |
+| Swagger UI | `/api/docs` | **404** (disabled) |
+| OpenAPI JSON | `/api/docs-json` | **404** (disabled) |
+| Health JSON | `/health?format=json` | OK |
+| Health page (browser) | `/health` | OK |
 
-- Local: `http://localhost:3001/api/docs`
-- Live: `https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net/api/docs`
+- Local (docs on): set `ENABLE_API_DOCS=true` → `http://localhost:3001/api/docs`
+- Live: prefer Postman collection + `test:api:vapt`; do not expect Swagger UI
 
 ## Warning — shared database
 

@@ -15,6 +15,7 @@
 - **Overall:** **Complete** for internal sign-off — all checklist IDs exercised; **no remaining N/A**.
 - Critical: **0** · High: **0** (Swagger fixed) · Medium: **0** · Low: **0** · Info: **0**
 - Microsoft login **C04** verified end-to-end (Entra password + Authenticator MFA → Choose Workspace → Live dashboard).
+- Automated retest: backend `npm run test:api:vapt` · frontend `npm run test:e2e` (Playwright). Postman collection + docs-guide VAPT notes refreshed for JWT-gated catalogs/FX and Swagger-off prod.
 
 ## Pre-flight
 

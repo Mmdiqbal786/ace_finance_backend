@@ -691,15 +691,15 @@ collection.item.push(
         ],
       }),
       req({
-        name: 'Submit expense (public, multipart)',
+        name: 'Submit expense (Bearer, multipart)',
         method: 'POST',
         path: '/expenses',
         formdata: [
-          text('requesterName', 'Requester GAC', '[Required]'),
+          text('requesterName', 'Requester GAC', '[Optional] Display name (JWT is source of truth)'),
           text(
             'requesterEmail',
             'requester.gac@acefinance.com',
-            '[Required] Requesters must be assigned to the project',
+            '[Ignored] Requester email is taken from the Bearer JWT',
           ),
           text(
             'originalAmount',
@@ -737,7 +737,7 @@ collection.item.push(
           ),
         ],
         sop: {
-          auth: false,
+          auth: true,
           badRequest:
             'Duplicate invoice file detected: This exact invoice document was already submitted…',
           forbidden:
@@ -745,7 +745,7 @@ collection.item.push(
         },
         description: howWhy(
           'Requester raises a new expense with its invoice.',
-          'Pick a file for `invoice`, Send → Tests script saves `expenseId`. Approvers of the project are emailed.',
+          'Authorize as REQUESTER → pick a file for `invoice` → Send. Tests script saves `expenseId`. Approvers of the project are emailed.',
           '**Hard duplicate** (same file / invoice #) → 400, request not created. **Potential duplicate** → 400 `POTENTIAL_DUPLICATE:…` unless `duplicateConfirmed=true`. Use **Check duplicate** first.',
         ),
         events: saveId('expenseId', 'res.id'),
@@ -770,16 +770,23 @@ collection.item.push(
         ],
       }),
       req({
-        name: 'Track expense by ID (public)',
+        name: 'Get expense by ID (Bearer)',
         method: 'GET',
         path: '/expenses/{{expenseId}}',
-        sop: { auth: false, notFound: EXP_NF },
+        sop: {
+          auth: true,
+          notFound: EXP_NF,
+          forbidden: 'You do not have access to this expense.',
+        },
         description: howWhy(
-          'Public tracking page / request detail.',
-          'No auth. Includes the `history` timeline.',
+          'Request detail for an authorized viewer.',
+          'Bearer required. Unauthorized peer / missing id → **404** (same message; no existence oracle). Includes `history`.',
         ),
         events: ['const res = pm.response.json();', ...saveReceipt],
-        examples: [example('200 OK', 200, S.EXPENSE_APPROVED)],
+        examples: [
+          example('200 OK', 200, S.EXPENSE_APPROVED),
+          example('404 Not Found', 404, err(404, EXP_NF)),
+        ],
       }),
       req({
         name: 'List expenses (role-scoped)',
@@ -1126,13 +1133,13 @@ function catalogFolder({
   const dup = `${label} "${row.name}" already exists`;
   return folder(name, 'Request form dropdowns; Admin → ' + name + '.', [
     req({
-      name: `Active ${name.toLowerCase()} (public)`,
+      name: `Active ${name.toLowerCase()} (Bearer)`,
       method: 'GET',
       path: `${path}/active`,
-      sop: { auth: false },
+      sop: { auth: true },
       description: howWhy(
         'Dropdown on the request form.',
-        'No auth. Send the `name` on POST /expenses.',
+        'Bearer required. Send the `name` on POST /expenses.',
       ),
       examples: [example('200 OK', 200, [row])],
     }),
@@ -1278,17 +1285,17 @@ collection.item.push(
 collection.item.push(
   folder('FX', 'Typing an amount on the request form.', [
     req({
-      name: 'Convert to USD (public)',
+      name: 'Convert to USD (Bearer)',
       method: 'GET',
       path: '/fx/convert',
       query: [
         q('currency', 'INR', { required: true }),
         q('amount', 1500, { required: true }),
       ],
-      sop: { auth: false, badRequest: 'amount query must be a number' },
+      sop: { auth: true, badRequest: 'amount query must be a number' },
       description: howWhy(
         '"≈ $15.63 USD" preview.',
-        "Today's rate — same conversion stored on submit.",
+        "Bearer required. Today's rate — same conversion stored on submit.",
       ),
       examples: [example('200 OK', 200, S.FX_DATA)],
     }),
