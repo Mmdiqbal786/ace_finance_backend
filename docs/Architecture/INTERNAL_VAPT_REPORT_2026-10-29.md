@@ -14,8 +14,8 @@
 
 - **Overall:** **Complete** for internal sign-off — all checklist IDs exercised; **no remaining N/A**.
 - Critical: **0** · High: **0** (Swagger fixed) · Medium: **0** · Low: **0** · Info: **0**
-- Microsoft login **C04** verified end-to-end (Entra password + Authenticator MFA → Choose Workspace → Live dashboard).
-- Automated retest: backend `npm run test:api:vapt` · frontend `npm run test:e2e` (Playwright). Postman collection + docs-guide VAPT notes refreshed for JWT-gated catalogs/FX and Swagger-off prod.
+- Microsoft login **C04** verified end-to-end (Entra password + Authenticator MFA → Choose Workspace → Live dashboard), including automated fresh challenge via `?prompt=login` (`npm run test:e2e:mfa`, 2026-10-30).
+- Automated retest: backend `npm run test:api:vapt` · frontend `npm run test:e2e` + `test:e2e:mfa` (Playwright). Postman collection + docs-guide VAPT notes refreshed for JWT-gated catalogs/FX and Swagger-off prod. No residual gaps.
 
 ## Pre-flight
 
@@ -46,7 +46,7 @@
 | C01 | **PASS** | Bad password login generic **401** |
 | C02 | **PASS** | Demo access verify wrong/right codes |
 | C03 | **PASS** | Demo-login JWT `store:demo` |
-| C04 | **PASS** | Full E2E: Entra password + Authenticator number-match MFA → API callback → Choose Workspace → Live `/dashboard/` as REQUESTER (`iqbal@aceolution.com`). Redirect params use short `ms_ok`-style success (no long-lived token in hash). |
+| C04 | **PASS** | Full E2E: Entra password + Authenticator number-match MFA → API callback → Choose Workspace → Live `/dashboard/` as REQUESTER (`iqbal@aceolution.com`). Redirect params use short `ms_ok`-style success (no long-lived token in hash). Automated retest 2026-10-30: `GET /auth/microsoft/login?prompt=login` + headed `npm run test:e2e:mfa` → Authenticator number-match → Live dashboard (**PASS**). |
 | C05 | **PASS** | JWT in `sessionStorage`; not in `localStorage` |
 | C06 | **PASS** | Admin Choose Workspace Live+Demo; API isolation live=0 vs demo=39 expenses; bad store → 400 |
 | C07 | **PASS** | UI Sign Out → confirm → `/login`; `ace_finance_token` cleared |
@@ -89,7 +89,7 @@
 
 ## Residual (not a checklist N/A)
 
-- None.
+- None. Fresh Entra MFA each CI/local run needs a human Authenticator tap by design (`prompt=login`); covered by headed `npm run test:e2e:mfa` (PASS 2026-10-30). Not a product or test gap.
 
 ## Retest log
 
@@ -102,6 +102,7 @@
 | 2026-10-29 | C04 full Microsoft MFA → workspace → Live dashboard | PASS |
 | 2026-10-29 | E06, H01, I02, J01 + pre-flight P1/P3/P4/P7/P9 | PASS |
 | 2026-10-29 | F-2 / F-3 live retest after `59c5d68` | PASS |
+| 2026-10-30 | C04 forced `prompt=login` + Authenticator → Live dashboard (`test:e2e:mfa`) | PASS |
 
 ## Sign-off
 

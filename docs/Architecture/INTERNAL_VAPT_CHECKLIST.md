@@ -231,7 +231,7 @@ set MS_E2E_PASSWORD=***
 npm run test:e2e:mfa
 ```
 
-Uses `GET /auth/microsoft/login?prompt=login`. Approve the number in Authenticator when the test prints it (headed browser).
+Uses `GET /auth/microsoft/login?prompt=login`. Approve the number in Authenticator when the test prints it (headed browser). Live retest **PASS** 2026-10-30 (number-match → Choose Workspace → Live dashboard).
 
 ---
 
