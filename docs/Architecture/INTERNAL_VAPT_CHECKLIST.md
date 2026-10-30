@@ -208,7 +208,21 @@ npm run test:api:vapt
 ```
 
 Covers automatable checklist IDs (authz, IDOR→404, uploads, duplicates, Swagger off, CORS, demo gate, etc.).  
-**Still human:** C04 full Microsoft MFA in browser; A02 SWA document headers. Optional: `RUN_THROTTLE=1` for I01/I02.
+Optional: `RUN_THROTTLE=1` for I01/I02.
+
+### Automated UI / browser (Playwright)
+
+```bash
+cd ace_finance_frontend
+set BASE_URL=https://finance.aceolution.com
+set DEMO_ACCESS_CODE=Aceolution_2024
+npm run test:e2e
+# or VAPT-tagged only:
+npm run test:e2e:vapt
+```
+
+Covers A02 headers, B03/B04 gates, C03/C05/C07 Demo Access, C04 OAuth redirect start, requester nav.  
+**Still human:** C04 Authenticator number-match approval only.
 
 ---
 
