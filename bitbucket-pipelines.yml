@@ -1,0 +1,29 @@
+# Aceolution Finance API — automated smoke + VAPT on main / PRs
+image: node:22
+
+definitions:
+  steps:
+    - step: &api-smoke-vapt
+        name: API smoke + VAPT
+        caches:
+          - node
+        script:
+          - npm ci
+          - |
+            export BASE_URL="${API_BASE_URL:-https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net}"
+            export DEMO_ACCESS_CODE="${DEMO_ACCESS_CODE:-Aceolution_2024}"
+            export TEST_STORE=demo
+            # Do not set RUN_THROTTLE=1 in CI (leaves login rate-limit hot on shared API)
+            npm run test:api:vapt
+        artifacts:
+          - postman/**
+
+pipelines:
+  default:
+    - step: *api-smoke-vapt
+  branches:
+    main:
+      - step: *api-smoke-vapt
+  pull-requests:
+    '**':
+      - step: *api-smoke-vapt

@@ -197,6 +197,19 @@ Use **Demo** unless the row says Live. Replace `{expenseId}` with a real Demo ex
 
 **Timebox:** ~½–1 day for a careful first pass; retest fixes in 1–2 hours.
 
+### Automated retest (API)
+
+```bash
+cd ace_finance_backend
+set BASE_URL=https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net
+set DEMO_ACCESS_CODE=Aceolution_2024
+set TEST_STORE=demo
+npm run test:api:vapt
+```
+
+Covers automatable checklist IDs (authz, IDOR→404, uploads, duplicates, Swagger off, CORS, demo gate, etc.).  
+**Still human:** C04 full Microsoft MFA in browser; A02 SWA document headers. Optional: `RUN_THROTTLE=1` for I01/I02.
+
 ---
 
 ## 7. Report template (copy into `00-report.md`)

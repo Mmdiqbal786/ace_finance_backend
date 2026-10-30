@@ -25,7 +25,9 @@
     "postman:verify": "node postman/lib/verify.mjs",
     "test:api:smoke": "node postman/lib/verify.mjs smoke",
     "test:api:system": "node postman/lib/verify.mjs system",
-    "test:api:full": "node postman/lib/verify.mjs full"
+    "test:api:full": "node postman/lib/verify.mjs full",
+    "test:api:vapt": "node postman/lib/verify.mjs vapt",
+    "test:api:all": "node postman/lib/verify.mjs all"
   },
   "dependencies": {
     "@azure/communication-email": "^1.1.0",

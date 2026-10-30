@@ -6,10 +6,12 @@ HTTP scenarios against a running API (`BASE_URL`, default `http://localhost:3001
 
 | Command | When to use |
 |---------|-------------|
-| `npm run test:api:smoke` | Fast read-only check (health + Swagger, negatives, auth/roles, RBAC, catalog, dashboards, FX, notifications) |
+| `npm run test:api:smoke` | Fast check (health, negatives, auth/roles, RBAC, catalog, dashboards, FX, notifications) |
 | `npm run test:api:system` | **Pre-push gate** — smoke + catalog-crud + expense-flow + changes-flow |
 | `npm run test:api:full` | system + users-crud |
-| `npm run postman:verify -- <scenario>` | Single scenario (e.g. `expense-flow`, `rbac`) |
+| `npm run test:api:vapt` | **Internal VAPT automation** — smoke auth gates + full automatable security checklist |
+| `npm run test:api:all` | full + vapt |
+| `npm run postman:verify -- <scenario>` | Single scenario (e.g. `expense-flow`, `vapt`, `rbac`) |
 | `npm run postman:verify -- list` | List scenarios / suites |
 | `npm run postman:generate` | Rebuild `Aceolution-Finance.postman_collection.json` from the Swagger samples |
 
@@ -19,18 +21,31 @@ HTTP scenarios against a running API (`BASE_URL`, default `http://localhost:3001
 # default
 set BASE_URL=http://localhost:3001
 
-# Azure live (writes to shared DB — use carefully)
+# Azure live (Demo store writes — still use carefully)
 set BASE_URL=https://ace-finance-api-f5hnhhd6c3bvffhj.southindia-01.azurewebsites.net
+set DEMO_ACCESS_CODE=Aceolution_2024
+set TEST_STORE=demo
+
+# Optional
+set EXPECT_API_DOCS=true   # only when Swagger is intentionally on
+set SKIP_THROTTLE=1        # skip I01/I02 rate-limit probes (CI)
 ```
 
-Logins used (seeded accounts):
+Logins used (seeded accounts) — runner uses **Demo Access** for personas and admin **password → select Demo**:
 
 | Role | Email | Password / path |
 |------|-------|-----------------|
-| ADMIN | `finance@aceolution.com` | `Admin@1234` (may return workspace choice → Live/Demo) |
-| REQUESTER | `requester.gac@acefinance.com` | Prefer **Demo Access** `POST /auth/demo-login` `{ email }` (demo store) |
-| APPROVER | `approver.media@acefinance.com` | Prefer Demo Access login |
-| PROCESSOR | `alisha.processor@acefinance.com` | Prefer Demo Access login |
+| ADMIN | `finance@aceolution.com` | `Admin@1234` → workspace **demo** |
+| REQUESTER | `requester.gac@acefinance.com` | Demo Access + `Requester@1234` |
+| REQUESTER (peer) | `requester.news@acefinance.com` | Demo Access (IDOR checks) |
+| APPROVER | `approver.media@acefinance.com` | Demo Access + `Approver@1234` |
+| PROCESSOR | `alisha.processor@acefinance.com` | Demo Access + `Processor@1234` |
+
+### VAPT automation vs human residual
+
+Automatable checklist IDs run in `vapt` (authz, IDOR→404, uploads, duplicates, throttle, CORS, Swagger off, demo gate, etc.).
+
+**Still human / browser residual:** C04 full Microsoft MFA number-match; A02 Static Web App document security headers (spot-check).
 
 Also in Postman **Authentication**: Microsoft status, List Demo Access accounts, Demo Access login, Select workspace, Check duplicate (Expenses).
 

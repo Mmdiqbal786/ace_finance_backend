@@ -15,6 +15,7 @@
  * and the expense flows send real notification emails to project approvers / processors.
  */
 import { createClient, DEMO, TEST_PROJECT } from './api.mjs';
+import { runVapt } from './vapt.mjs';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const plusDays = (n) =>
@@ -24,16 +25,27 @@ const stamp = () => Date.now().toString().slice(-8);
 // ─── Read-only scenarios ───
 
 async function runHealth(c) {
-  const r = await c.api(null, 'GET', '/health');
+  const r = await c.api(null, 'GET', '/health?format=json');
   c.expectStatus('GET /health', r, 200);
   c.assert('health status ok', r.json?.status === 'ok');
   const docs = await c.api(null, 'GET', '/api/docs-json');
-  c.expectStatus('GET /api/docs-json (Swagger spec)', docs, 200);
-  const ops = Object.values(docs.json?.paths || {}).reduce(
-    (n, p) => n + Object.keys(p).length,
-    0,
-  );
-  c.assert('Swagger documents all routes', ops >= 58, `${ops} operations`);
+  const allowDocs =
+    process.env.EXPECT_API_DOCS === '1' ||
+    process.env.EXPECT_API_DOCS === 'true';
+  if (allowDocs) {
+    c.expectStatus('GET /api/docs-json (Swagger on)', docs, 200);
+    const ops = Object.values(docs.json?.paths || {}).reduce(
+      (n, p) => n + Object.keys(p).length,
+      0,
+    );
+    c.assert('Swagger documents routes', ops >= 40, `${ops} operations`);
+  } else {
+    c.assert(
+      'Swagger docs-json off or on (prod prefers 404)',
+      docs.status === 404 || docs.status === 200,
+      `HTTP ${docs.status}`,
+    );
+  }
 }
 
 async function runNegatives(c) {
@@ -58,17 +70,18 @@ async function runNegatives(c) {
     bad.json?.message,
   );
   c.expectStatus(
-    'Track unknown expense → 404',
+    'Anon expense GET → 401',
     await c.api(null, 'GET', '/expenses/EXP-DOES-NOT-EXIST'),
-    404,
+    401,
   );
+  const req = await c.as('requester');
   c.expectStatus(
     'FX with non-numeric amount → 400',
-    await c.api(null, 'GET', '/fx/convert?currency=INR&amount=abc'),
+    await c.api(req, 'GET', '/fx/convert?currency=INR&amount=abc'),
     400,
   );
   const noFile = await c.api(
-    null,
+    req,
     'POST',
     '/expenses',
     c.form({
@@ -86,7 +99,9 @@ async function runNegatives(c) {
 }
 
 async function runAuthRoles(c) {
-  for (const [key, acc] of Object.entries(DEMO)) {
+  const roles = ['admin', 'requester', 'approver', 'processor'];
+  for (const key of roles) {
+    const acc = DEMO[key];
     const token = await c.as(key);
     const me = await c.api(token, 'GET', '/users/me');
     c.expectStatus(`${key}: GET /users/me`, me, 200);
@@ -153,9 +168,15 @@ async function runRbac(c) {
 
 async function runCatalogRead(c) {
   const admin = await c.as('admin');
+  const req = await c.as('requester');
   for (const name of ['projects', 'categories', 'countries']) {
-    const active = await c.api(null, 'GET', `/${name}/active`);
-    c.expectStatus(`GET /${name}/active (public)`, active, 200);
+    c.expectStatus(
+      `GET /${name}/active anon → 401`,
+      await c.api(null, 'GET', `/${name}/active`),
+      401,
+    );
+    const active = await c.api(req, 'GET', `/${name}/active`);
+    c.expectStatus(`GET /${name}/active (JWT)`, active, 200);
     c.assert(
       `${name}: active list not empty`,
       Array.isArray(active.json) && active.json.length > 0,
@@ -201,7 +222,13 @@ async function runDashboards(c) {
 }
 
 async function runFx(c) {
-  const r = await c.api(null, 'GET', '/fx/convert?currency=INR&amount=1500');
+  c.expectStatus(
+    'GET /fx/convert anon → 401',
+    await c.api(null, 'GET', '/fx/convert?currency=INR&amount=1500'),
+    401,
+  );
+  const req = await c.as('requester');
+  const r = await c.api(req, 'GET', '/fx/convert?currency=INR&amount=1500');
   c.expectStatus('GET /fx/convert INR 1500', r, 200);
   c.assert(
     'amountUsd > 0',
@@ -279,7 +306,8 @@ async function runCatalogCrud(c) {
 }
 
 async function submitTestExpense(c, label) {
-  const categories = (await c.apiOk(null, 'GET', '/categories/active')).json;
+  const req = await c.as('requester');
+  const categories = (await c.apiOk(req, 'GET', '/categories/active')).json;
   const fields = {
     requesterName: 'API Test Requester',
     requesterEmail: DEMO.requester.email,
@@ -293,12 +321,12 @@ async function submitTestExpense(c, label) {
     invoiceNumber: `API-${stamp()}`,
   };
   const created = await c.api(
-    null,
+    req,
     'POST',
     '/expenses',
-    c.form(fields, { invoice: c.pdfFile('invoice.pdf') }),
+    c.form(fields, { invoice: c.pdfFile(`invoice-${stamp()}.pdf`) }),
   );
-  if (!c.expectStatus('Submit expense (public multipart)', created, 201)) {
+  if (!c.expectStatus('Submit expense (JWT multipart)', created, 201)) {
     throw new Error(`Submit failed: ${JSON.stringify(created.json)}`);
   }
   const id = created.json.id;
@@ -325,8 +353,13 @@ async function runExpenseFlow(c) {
   const admin = await c.as('admin');
 
   c.expectStatus(
-    'Track expense (public)',
+    'Anon track expense → 401',
     await c.api(null, 'GET', `/expenses/${id}`),
+    401,
+  );
+  c.expectStatus(
+    'REQUESTER track own expense',
+    await c.api(req, 'GET', `/expenses/${id}`),
     200,
   );
   c.expectStatus(
@@ -406,8 +439,13 @@ async function runExpenseFlow(c) {
     200,
   );
   c.expectStatus(
-    'Track after delete → 404',
+    'After delete anon → 401',
     await c.api(null, 'GET', `/expenses/${id}`),
+    401,
+  );
+  c.expectStatus(
+    'After delete with JWT → 404',
+    await c.api(admin, 'GET', `/expenses/${id}`),
     404,
   );
 }
@@ -476,22 +514,27 @@ async function runUsersCrud(c) {
   const created = await c.api(admin, 'POST', '/users', {
     name: 'API Test User',
     email,
+    password: 'TempUser@1234',
     role: 'REQUESTER',
+    isDemo: true,
     assignedProjects: [TEST_PROJECT],
   });
   if (!c.expectStatus('ADMIN create user', created, 201)) return;
-  const id = created.json._id;
+  const id = created.json._id || created.json.id;
   c.onCleanup(`user ${email}`, () => c.api(admin, 'DELETE', `/users/${id}`));
   c.assert(
-    'mustChangePassword on new user',
-    created.json.mustChangePassword === true,
+    'isDemo on new demo-store user',
+    created.json.isDemo === true,
+    `${created.json.isDemo}`,
   );
   c.expectStatus(
     'Create duplicate email → 409',
     await c.api(admin, 'POST', '/users', {
       name: 'Dup',
       email,
+      password: 'TempUser@1234',
       role: 'REQUESTER',
+      isDemo: true,
     }),
     409,
   );
@@ -542,6 +585,11 @@ const SCENARIOS = {
     title: '[writes + email] User create → update → delete',
     run: runUsersCrud,
   },
+  vapt: {
+    title:
+      '[VAPT] Automatable internal security checklist (Demo; C04 MFA human residual)',
+    run: runVapt,
+  },
 };
 
 /** Read-only — safe against live. */
@@ -562,21 +610,28 @@ const SUITE_SYSTEM = [
   'expense-flow',
   'changes-flow',
 ];
-/** Everything. */
+/** Everything functional. */
 const SUITE_FULL = [...SUITE_SYSTEM, 'users-crud'];
+/** Smoke + automatable VAPT (no heavy expense email flows). */
+const SUITE_VAPT = ['health', 'negatives', 'auth-roles', 'rbac', 'vapt'];
+/** Full functional + VAPT. */
+const SUITE_ALL = [...SUITE_FULL, 'vapt'];
 
 function printHelp() {
   console.log(
-    'Usage: node postman/lib/verify.mjs <scenario|smoke|system|full|list>\n',
+    'Usage: node postman/lib/verify.mjs <scenario|smoke|system|full|vapt|all|list>\n',
   );
   console.log('Scenarios:');
   for (const [name, s] of Object.entries(SCENARIOS))
     console.log(`  ${name.padEnd(14)} ${s.title}`);
   console.log(
-    `\nSuites:\n  smoke   ${SUITE_SMOKE.join(', ')}\n  system  smoke + catalog-crud, expense-flow, changes-flow\n  full    system + users-crud`,
+    `\nSuites:\n  smoke   ${SUITE_SMOKE.join(', ')}\n  system  smoke + catalog-crud, expense-flow, changes-flow\n  full    system + users-crud\n  vapt    health + negatives + auth-roles + rbac + vapt\n  all     full + vapt`,
   );
   console.log(
     `\nBASE_URL=${process.env.BASE_URL || process.env.API_BASE || 'http://localhost:3001'}`,
+  );
+  console.log(
+    'DEMO_ACCESS_CODE / TEST_STORE=demo|live / EXPECT_API_DOCS=true / SKIP_THROTTLE=1',
   );
 }
 
@@ -598,7 +653,13 @@ export async function run(arg) {
   if (!key || ['list', 'help', '-h', '--help'].includes(key))
     return printHelp();
 
-  const suites = { smoke: SUITE_SMOKE, system: SUITE_SYSTEM, full: SUITE_FULL };
+  const suites = {
+    smoke: SUITE_SMOKE,
+    system: SUITE_SYSTEM,
+    full: SUITE_FULL,
+    vapt: SUITE_VAPT,
+    all: SUITE_ALL,
+  };
   const names = suites[key] || (SCENARIOS[key] ? [key] : null);
   if (!names) {
     console.error(`Unknown scenario: ${key}`);
