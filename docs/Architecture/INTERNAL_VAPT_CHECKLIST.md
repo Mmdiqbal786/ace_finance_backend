@@ -221,8 +221,17 @@ npm run test:e2e
 npm run test:e2e:vapt
 ```
 
-Covers A02 headers, B03/B04 gates, C03/C05/C07 Demo Access, C04 OAuth redirect start, requester nav.  
-**Still human:** C04 Authenticator number-match approval only.
+Covers A02 headers, B03/B04 gates, C03/C05/C07 Demo Access, C04 OAuth redirect start, requester nav.
+
+**C04 full MFA (fresh challenge):** force Entra re-login + Authenticator number-match:
+
+```bash
+set MS_E2E_EMAIL=iqbal@aceolution.com
+set MS_E2E_PASSWORD=***
+npm run test:e2e:mfa
+```
+
+Uses `GET /auth/microsoft/login?prompt=login`. Approve the number in Authenticator when the test prints it (headed browser).
 
 ---
 
