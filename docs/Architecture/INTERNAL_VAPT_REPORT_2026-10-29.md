@@ -17,6 +17,14 @@
 - Microsoft login **C04** verified end-to-end (Entra password + Authenticator MFA → Choose Workspace → Live dashboard), including automated fresh challenge via `?prompt=login` (`npm run test:e2e:mfa`, 2026-10-30).
 - Automated retest: backend `npm run test:api:vapt` · frontend `npm run test:e2e` + `test:e2e:mfa` (Playwright). Postman collection + docs-guide VAPT notes refreshed for JWT-gated catalogs/FX and Swagger-off prod. No residual gaps.
 
+### Closure status (this run)
+
+| Check | Status |
+|-------|--------|
+| Checklist IDs marked **N/A** | **0** — every in-scope ID is **PASS** |
+| Open findings waiting on a fix | **0** — F-1 / F-2 / F-3 are **Fixed** + live retest **PASS** |
+| Unfinished security items | **0** — residual **None** |
+
 ## Pre-flight
 
 | ID | Result | Notes |
@@ -89,7 +97,8 @@
 
 ## Residual (not a checklist N/A)
 
-- None. Fresh Entra MFA each CI/local run needs a human Authenticator tap by design (`prompt=login`); covered by headed `npm run test:e2e:mfa` (PASS 2026-10-30). Not a product or test gap.
+- **None.** No open N/A rows. No unfinished security item waiting on another fix.
+- Fresh Entra MFA each CI/local run needs a human Authenticator tap by design (`prompt=login`); covered by headed `npm run test:e2e:mfa` (PASS 2026-10-30). That is expected Entra behavior, not a product or test gap.
 
 ## Retest log
 
@@ -106,7 +115,7 @@
 
 ## Sign-off
 
-- Tester: Iqbal Ahamed _____________ Date: 2026-10-29
+- Tester: Iqbal Ahamed _____________ Date: 2026-10-29 (MFA automation close-out 2026-10-30)
 - Manager (optional): _____________ Date: _____________
 
 **Disclaimer:** Internal security verification only. Not a third-party certified penetration test.
